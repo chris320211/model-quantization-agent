@@ -6,13 +6,13 @@ from dataclasses import asdict
 from langchain_core.tools import tool
 
 from .. import executor
-from .script_generator import render
 
 
 @tool
 def execute_quantization(
     method_id: str,
     model_id: str,
+    script_code: str,
     options: dict | None = None,
 ) -> str:
     """Launch the quantization script in the background on this EC2 box and return a job_id.
@@ -22,19 +22,16 @@ def execute_quantization(
     to poll status and `tail_job_logs(job_id)` to read recent logs.
 
     Args:
-        method_id: Catalog id from recommend_quantization (e.g. 'awq', 'gptq', 'hqq', 'bnb_nf4').
-        model_id:  HuggingFace model id being ported.
-        options:   Optional overrides forwarded to the template (bits, group_size, output_dir, ...).
-
-    Only call this after the user has approved the recommended method.
+        method_id:   Catalog id (e.g. 'awq', 'gptq', 'hqq', 'bnb_nf4').
+        model_id:    HuggingFace model id being ported.
+        script_code: Full Python source to run (produced by the Adapt agent).
+        options:     Optional dict; currently used only for output_dir override.
     """
     opts = dict(options or {})
     output_dir = opts.get("output_dir") or f"./quantized/{method_id}-{model_id.replace('/', '__')}"
-    opts["output_dir"] = output_dir
 
-    code = render(method_id, model_id, options=opts)
     try:
-        meta = executor.launch(method_id, model_id, code, output_dir)
+        meta = executor.launch(method_id, model_id, script_code, output_dir)
     except (ValueError, RuntimeError) as e:
         return json.dumps({"error": str(e)})
     return json.dumps(

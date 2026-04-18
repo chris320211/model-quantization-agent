@@ -2,6 +2,9 @@
 .env.local
 data/chroma/
 out/
+jobs/
+quantized/
+.venvs/
 __pycache__/
 *.py[cod]
 *.egg-info/

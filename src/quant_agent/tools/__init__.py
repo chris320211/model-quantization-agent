@@ -1,10 +1,9 @@
-from .rag import rag_search
+from .rag import rag_search, rag_survey
 from .arxiv_tool import arxiv_fetch
-from .github_tool import github_readme
+from .github_tool import github_readme, github_list_dir, github_file
 from .hf_hub import hf_model_info
 from .gpu_info import gpu_info
 from .recommender import recommend_quantization, load_catalog
-from .script_generator import generate_script
 from .executor_tools import (
     execute_quantization,
     check_job,
@@ -12,19 +11,24 @@ from .executor_tools import (
     tail_job_logs,
     kill_job,
 )
+from .script_io import ValidationSession, make_write_script_tool, validate
 
 __all__ = [
     "rag_search",
+    "rag_survey",
     "arxiv_fetch",
     "github_readme",
+    "github_list_dir",
+    "github_file",
     "hf_model_info",
     "gpu_info",
-    "recommend_quantization",
-    "generate_script",
     "load_catalog",
     "execute_quantization",
     "check_job",
     "list_jobs",
     "tail_job_logs",
     "kill_job",
+    "ValidationSession",
+    "make_write_script_tool",
+    "validate",
 ]

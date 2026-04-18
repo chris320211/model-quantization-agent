@@ -71,7 +71,8 @@ def _pid_alive(pid: int) -> bool:
         return True  # process exists, just not ours
 
 
-def _venv_python(venv_name: str) -> Path:
+def venv_python(venv_name: str) -> Path:
+    """Path to the python binary inside a method-specific venv."""
     return VENV_ROOT / venv_name / "bin" / "python"
 
 
@@ -83,7 +84,7 @@ def launch(method_id: str, model_id: str, script_code: str, output_dir: str) -> 
             f"No venv mapping for method '{method_id}'. Run scripts/bootstrap_ec2.sh first "
             f"or add '{method_id}' to METHOD_TO_VENV."
         )
-    py = _venv_python(venv)
+    py = venv_python(venv)
     if not py.exists():
         raise RuntimeError(
             f"Venv python not found at {py}. Run scripts/bootstrap_ec2.sh {venv} first."

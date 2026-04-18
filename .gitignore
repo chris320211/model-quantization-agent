@@ -1,0 +1,12 @@
+.env
+.env.local
+data/chroma/
+out/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+.DS_Store

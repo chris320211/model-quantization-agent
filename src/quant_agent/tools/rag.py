@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import os
 from collections import defaultdict
 
 from langchain_core.tools import tool
 
-from ..retrieval import get_vectorstore
+
+def _rag_disabled() -> bool:
+    return os.environ.get("QUANT_AGENT_DISABLE_RAG", "").lower() in {"1", "true", "yes"}
 
 
 def _format_hit(i: int, d) -> str:
@@ -25,6 +28,10 @@ def rag_search(query: str, k: int = 6, method_id: str | None = None) -> str:
     When `method_id` is set, restricts results to chunks tagged for that method in the catalog
     (e.g. 'awq', 'gptq', 'hqq'). Returns the top-k chunks with their source URIs.
     """
+    if _rag_disabled():
+        return "RAG disabled (QUANT_AGENT_DISABLE_RAG is set). No literature context available."
+    from ..retrieval import get_vectorstore
+
     vs = get_vectorstore()
     kwargs = {"k": k}
     if method_id:
@@ -42,6 +49,10 @@ def rag_survey(query: str, k: int = 20) -> str:
     picking 3-8 candidate methods. Not registered as a LangChain tool on purpose — the
     Research agent is structured-output, not a ReAct loop.
     """
+    if _rag_disabled():
+        return "RAG disabled (QUANT_AGENT_DISABLE_RAG is set)."
+    from ..retrieval import get_vectorstore
+
     vs = get_vectorstore()
     results = vs.similarity_search(query, k=k)
     if not results:

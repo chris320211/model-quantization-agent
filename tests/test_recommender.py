@@ -46,10 +46,10 @@ def test_no_calibration_excludes_gptq_and_awq():
 
 
 def test_qat_gated_by_allow_qat():
-    ranked_default = rank(Constraints(params_b=7.0, vram_gb=24.0))
+    ranked_default = rank(Constraints(params_b=7.0, vram_gb=24.0), top_k=20)
     assert "llm_qat" not in {m["id"] for m in ranked_default}
 
-    ranked_qat = rank(Constraints(params_b=7.0, vram_gb=24.0, allow_qat=True))
+    ranked_qat = rank(Constraints(params_b=7.0, vram_gb=24.0, allow_qat=True), top_k=20)
     assert "llm_qat" in {m["id"] for m in ranked_qat}
 
 

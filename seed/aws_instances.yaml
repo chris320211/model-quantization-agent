@@ -1,0 +1,57 @@
+# AWS GPU instance type -> GPU spec.
+# vram_gb is per-instance (already summed across GPUs).
+# Source: AWS EC2 instance type documentation (accurate as of 2026-04).
+
+# G4dn (T4, older but cheap)
+g4dn.xlarge:    {vram_gb: 16,  gpu_count: 1, gpu: T4}
+g4dn.2xlarge:   {vram_gb: 16,  gpu_count: 1, gpu: T4}
+g4dn.4xlarge:   {vram_gb: 16,  gpu_count: 1, gpu: T4}
+g4dn.8xlarge:   {vram_gb: 16,  gpu_count: 1, gpu: T4}
+g4dn.12xlarge:  {vram_gb: 64,  gpu_count: 4, gpu: T4}
+g4dn.16xlarge:  {vram_gb: 16,  gpu_count: 1, gpu: T4}
+
+# G5 (A10G, mainstream 4-bit target)
+g5.xlarge:      {vram_gb: 24,  gpu_count: 1, gpu: A10G}
+g5.2xlarge:     {vram_gb: 24,  gpu_count: 1, gpu: A10G}
+g5.4xlarge:     {vram_gb: 24,  gpu_count: 1, gpu: A10G}
+g5.8xlarge:     {vram_gb: 24,  gpu_count: 1, gpu: A10G}
+g5.16xlarge:    {vram_gb: 24,  gpu_count: 1, gpu: A10G}
+g5.12xlarge:    {vram_gb: 96,  gpu_count: 4, gpu: A10G}
+g5.24xlarge:    {vram_gb: 96,  gpu_count: 4, gpu: A10G}
+g5.48xlarge:    {vram_gb: 192, gpu_count: 8, gpu: A10G}
+
+# G6 (L4, newer efficiency-focused)
+g6.xlarge:      {vram_gb: 24,  gpu_count: 1, gpu: L4}
+g6.2xlarge:     {vram_gb: 24,  gpu_count: 1, gpu: L4}
+g6.4xlarge:     {vram_gb: 24,  gpu_count: 1, gpu: L4}
+g6.8xlarge:     {vram_gb: 24,  gpu_count: 1, gpu: L4}
+g6.16xlarge:    {vram_gb: 24,  gpu_count: 1, gpu: L4}
+g6.12xlarge:    {vram_gb: 96,  gpu_count: 4, gpu: L4}
+g6.24xlarge:    {vram_gb: 96,  gpu_count: 4, gpu: L4}
+g6.48xlarge:    {vram_gb: 192, gpu_count: 8, gpu: L4}
+
+# G6e (L40S, large single-GPU)
+g6e.xlarge:     {vram_gb: 48,  gpu_count: 1, gpu: L40S}
+g6e.2xlarge:    {vram_gb: 48,  gpu_count: 1, gpu: L40S}
+g6e.4xlarge:    {vram_gb: 48,  gpu_count: 1, gpu: L40S}
+g6e.8xlarge:    {vram_gb: 48,  gpu_count: 1, gpu: L40S}
+g6e.16xlarge:   {vram_gb: 48,  gpu_count: 1, gpu: L40S}
+g6e.12xlarge:   {vram_gb: 192, gpu_count: 4, gpu: L40S}
+g6e.24xlarge:   {vram_gb: 192, gpu_count: 4, gpu: L40S}
+g6e.48xlarge:   {vram_gb: 384, gpu_count: 8, gpu: L40S}
+
+# P3 (V100, older HPC)
+p3.2xlarge:     {vram_gb: 16,  gpu_count: 1, gpu: V100}
+p3.8xlarge:     {vram_gb: 64,  gpu_count: 4, gpu: V100}
+p3.16xlarge:    {vram_gb: 128, gpu_count: 8, gpu: V100}
+
+# P4d (A100 40GB)
+p4d.24xlarge:   {vram_gb: 320, gpu_count: 8, gpu: A100-40GB}
+
+# P4de (A100 80GB)
+p4de.24xlarge:  {vram_gb: 640, gpu_count: 8, gpu: A100-80GB}
+
+# P5 (H100)
+p5.48xlarge:    {vram_gb: 640, gpu_count: 8, gpu: H100}
+# P5e (H200)
+p5e.48xlarge:   {vram_gb: 1128, gpu_count: 8, gpu: H200}

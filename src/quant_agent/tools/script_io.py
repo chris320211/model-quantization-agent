@@ -50,9 +50,12 @@ def validate(code: str, method_id: str) -> tuple[bool, str, str]:
     except SyntaxError as e:
         return False, "parse", f"{e.msg} at line {e.lineno}"
 
-    venv = METHOD_TO_VENV.get(method_id)
-    if venv is None:
+    if method_id not in METHOD_TO_VENV:
         return False, "dry-import", f"No venv mapping for method '{method_id}'"
+    venv = METHOD_TO_VENV[method_id]
+    if venv is None:
+        # Method has no pip-installable package (clone-and-run repo). Trust ast.parse.
+        return True, "ok", "dry-import skipped (no venv configured for this method)"
     py = venv_python(venv)
     if not py.exists():
         return False, "dry-import", (

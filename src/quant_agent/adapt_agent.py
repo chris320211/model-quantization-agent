@@ -67,6 +67,13 @@ Script requirements:
     the library's native save API (e.g. save_quantized / save_pretrained).
   - Must import the real library API surface you saw in the repo files — no invented names.
   - No CLI argparse is needed; hardcode the model id and output dir.
+  - HuggingFace auth: if the target model is gated (meta-llama/*, mistralai/Mixtral-*,
+    google/gemma-*, and similar), the script MUST read the token from the environment
+    (`HF_TOKEN = os.environ.get("HUGGINGFACE_HUB_TOKEN") or os.environ.get("HF_TOKEN")`)
+    and pass it to every loader/tokenizer call that accepts an auth kwarg (e.g.
+    `from_pretrained(..., token=HF_TOKEN)`, `login(token=HF_TOKEN)`, or the repo's own
+    `hf_token=` argument). Do NOT hardcode the token and do NOT pass `None` if the
+    environment variable is available at runtime.
 
 Stop calling tools once `write_script` returns status="ok".
 """

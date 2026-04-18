@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import typer
 
+from . import adapt_only as adapt_only_module
 from . import executor as executor_module
 from . import ingest as ingest_module
 from . import orchestrator as orchestrator_module
+from . import setup_cmd as setup_module
 
 app = typer.Typer(
     add_completion=False,
@@ -14,6 +16,20 @@ app = typer.Typer(
 
 jobs_app = typer.Typer(help="Inspect background quantization jobs.")
 app.add_typer(jobs_app, name="jobs")
+
+
+@app.command("setup")
+def setup_cmd(
+    force: bool = typer.Option(False, "--force", help="Overwrite an existing .env."),
+    validate: bool = typer.Option(
+        True, "--validate/--no-validate", help="Make a tiny live call to verify the key."
+    ),
+    no_optional: bool = typer.Option(
+        False, "--no-optional", help="Skip prompts for GITHUB_TOKEN / HUGGINGFACE_HUB_TOKEN."
+    ),
+) -> None:
+    """Interactively write .env with your API keys (hidden input, chmod 600)."""
+    raise typer.Exit(setup_module.run(force=force, validate=validate, no_optional=no_optional))
 
 
 @app.command("ingest")
@@ -32,6 +48,20 @@ def ask_cmd(
 ) -> None:
     """Research → pick → Adapt → execute (unless --dry)."""
     typer.echo(orchestrator_module.run(request, dry=dry))
+
+
+@app.command("adapt")
+def adapt_cmd(
+    method_id: str = typer.Argument(..., help="Catalog id from seed/methods.yaml, e.g. 'flatquant'."),
+    model_id: str = typer.Argument(..., help="Canonical HuggingFace model id, e.g. 'meta-llama/Llama-2-7b-hf'."),
+    bits: int = typer.Option(None, "--bits", help="Target bit-width (default: first value in the method's 'bits' list)."),
+    rag: bool = typer.Option(False, "--rag/--no-rag", help="Enable the local RAG index. Default is disabled for isolated Adapt tests."),
+) -> None:
+    """Skip Research/selection and drive the Adapt agent directly against a known (method, model) pair."""
+    script_path, _ = adapt_only_module.run(
+        method_id=method_id, model_id=model_id, bits=bits, disable_rag=not rag
+    )
+    typer.echo(f"Script written: {script_path}")
 
 
 @jobs_app.command("list")
@@ -67,19 +97,10 @@ def jobs_kill(job_id: str) -> None:
     typer.echo(meta.to_json())
 
 
-@app.callback(invoke_without_command=True)
-def default(
-    ctx: typer.Context,
-    request: str | None = typer.Argument(None),
-    dry: bool = typer.Option(False, "--dry", help="Stop after writing the validated script."),
-) -> None:
-    """Default: treat bare invocation as `ask`."""
-    if ctx.invoked_subcommand is not None:
-        return
-    if not request:
-        typer.echo(ctx.get_help())
-        raise typer.Exit(0)
-    typer.echo(orchestrator_module.run(request, dry=dry))
+@app.callback()
+def default(ctx: typer.Context) -> None:
+    """LangChain quantization-porting agent. Use a subcommand (e.g. `ask`, `setup`)."""
+    return
 
 
 if __name__ == "__main__":

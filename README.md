@@ -7,13 +7,22 @@ Two-subagent LangChain pipeline that ports quantization to HuggingFace LLMs. Giv
 3. **Adapt agent** reads the chosen repo's actual README + source via the GitHub API, writes a script, and validates it (`ast.parse` + top-level dry-import in the method's venv; up to 3 retries).
 4. The validated script is launched end-to-end on the box (skip with `--dry`).
 
+## Setup
+
+After cloning, install the package and run the interactive setup:
+
+```bash
+pip install -e .
+quant-agent setup
+```
+
+`quant-agent setup` prompts for `ANTHROPIC_API_KEY` (required) and optionally `GITHUB_TOKEN` / `HUGGINGFACE_HUB_TOKEN`. Input is hidden (via `getpass`), so nothing lands in shell history. It writes `.env` to the repo root with mode `0600` and is gitignored. By default it makes a 1-token call to Anthropic to verify the key; pass `--no-validate` to skip, `--force` to overwrite an existing file, or `--no-optional` to skip the optional tokens.
+
 ## Run it
 
 ### Laptop (dry mode — research + script only)
 
 ```bash
-pip install -e .
-cp .env.example .env              # fill ANTHROPIC_API_KEY
 python -m quant_agent.ingest
 quant-agent ask --dry "port llama2 7b to g5.xlarge"
 # -> lists 3-8 candidates with tradeoffs
@@ -37,7 +46,7 @@ Use the AWS **Deep Learning AMI GPU PyTorch** (Ubuntu 22.04, CUDA 12.1). Then:
 git clone <this repo> && cd model-quantization-agent
 bash scripts/bootstrap_ec2.sh           # creates .venvs/{awq,gptq,hqq,bnb}
 pip install -e .
-cp .env.example .env                    # fill ANTHROPIC_API_KEY
+quant-agent setup                       # interactive; writes .env (chmod 600)
 python -m quant_agent.ingest
 
 # then, any time:

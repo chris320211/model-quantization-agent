@@ -28,13 +28,17 @@ from .config import REPO_ROOT, load_settings
 JOBS_ROOT = REPO_ROOT / "jobs"
 VENV_ROOT = REPO_ROOT / ".venvs"
 
-# Map catalog method_id -> venv directory name (matches scripts/bootstrap_ec2.sh)
-METHOD_TO_VENV = {
+# Map catalog method_id -> venv directory name (matches scripts/bootstrap_ec2.sh).
+# A value of None means the method has no pip-installable package; dry-import validation
+# is skipped (ast.parse only) and end-to-end launch is unsupported (the generated script
+# must be run manually from inside the method's cloned repo).
+METHOD_TO_VENV: dict[str, str | None] = {
     "awq": "awq",
     "gptq": "gptq",
     "hqq": "hqq",
     "bnb_nf4": "bnb",
     "bnb_llm_int8": "bnb",
+    "flatquant": None,
 }
 
 

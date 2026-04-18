@@ -277,3 +277,19 @@
   speedup: 4
   maturity: 3
   notes: "Mixed-precision channel reordering for full W4A4KV4 quantization with strong throughput."
+
+- id: flatquant
+  name: FlatQuant
+  arxiv_id: "2410.09426"
+  repos:
+    - https://github.com/ruikangliu/FlatQuant
+  bits: [4]
+  quantizes: [weights, activations, kv_cache]
+  needs_calibration: true
+  qat: false
+  inference_backends: [transformers]
+  template: null
+  quality: 5
+  speedup: 3
+  maturity: 3
+  notes: "Learnable affine (flattening) transformations per linear layer to flatten weight + activation distributions before quantization. Strong W4A4KV4 on Llama-class models. Clone-and-run repo, not pip-installable."

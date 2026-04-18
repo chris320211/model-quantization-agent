@@ -18,7 +18,7 @@ app.add_typer(jobs_app, name="jobs")
 
 @app.command("ingest")
 def ingest_cmd() -> None:
-    """Build or refresh the local Chroma index from seed/methods.yaml."""
+    """Build or refresh the Qdrant Cloud index and R2 raw-file store from seed/methods.yaml."""
     n = ingest_module.ingest_all()
     typer.echo(f"Added {n} new chunks.")
 

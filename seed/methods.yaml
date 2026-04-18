@@ -1,279 +1,733 @@
-# Curated catalog of modern LLM quantization methods.
-# Each entry is consumed by tools/recommender.py (hard filters + scoring)
-# and by ingest.py (fetches arxiv + repo READMEs into Chroma).
-#
-# Fields
-#   id                   stable key referenced by templates and recommender
-#   name                 human name
-#   arxiv_id             arxiv identifier or null (e.g. engineering-only methods)
-#   repos                list of canonical implementation URLs
-#   bits                 list of supported target weight bit-widths
-#   quantizes            subset of [weights, activations, kv_cache]
-#   needs_calibration    requires a calibration dataset pass
-#   qat                  quantization-aware training (vs post-training)
-#   inference_backends   runtimes that can execute the quantized weights
-#   template             jinja template id in src/quant_agent/templates/, or null if no template yet
-#   quality              subjective 0-5: perplexity retention at 4-bit on Llama-class models
-#   speedup              subjective 0-5: kernel-level latency improvement on A100/4090
-#   maturity             subjective 0-5: how production-ready the tooling is
-#   notes                short description used as embedding seed + LLM context
-
 - id: gptq
   name: GPTQ
-  arxiv_id: "2210.17323"
+  arxiv_id: '2210.17323'
   repos:
-    - https://github.com/IST-DASLab/gptq
-    - https://github.com/ModelCloud/GPTQModel
-    - https://github.com/AutoGPTQ/AutoGPTQ
-  bits: [2, 3, 4, 8]
-  quantizes: [weights]
+  - https://github.com/IST-DASLab/gptq
+  - https://github.com/ModelCloud/GPTQModel
+  - https://github.com/AutoGPTQ/AutoGPTQ
+  bits:
+  - 2
+  - 3
+  - 4
+  - 8
+  quantizes:
+  - weights
   needs_calibration: true
   qat: false
-  inference_backends: [vllm, transformers, tgi, exllamav2]
+  inference_backends:
+  - vllm
+  - transformers
+  - tgi
+  - exllamav2
   template: gptq
   quality: 4
   speedup: 4
   maturity: 5
-  notes: "Layer-wise second-order PTQ using approximate Hessian info. Strong 4-bit baseline, widely supported."
-
+  notes: Layer-wise second-order PTQ using approximate Hessian info. Strong 4-bit
+    baseline, widely supported.
 - id: awq
   name: Activation-aware Weight Quantization
-  arxiv_id: "2306.00978"
+  arxiv_id: '2306.00978'
   repos:
-    - https://github.com/mit-han-lab/llm-awq
-    - https://github.com/casper-hansen/AutoAWQ
-  bits: [4]
-  quantizes: [weights]
+  - https://github.com/mit-han-lab/llm-awq
+  - https://github.com/casper-hansen/AutoAWQ
+  bits:
+  - 4
+  quantizes:
+  - weights
   needs_calibration: true
   qat: false
-  inference_backends: [vllm, transformers, tgi]
+  inference_backends:
+  - vllm
+  - transformers
+  - tgi
   template: awq
   quality: 5
   speedup: 4
   maturity: 5
-  notes: "Protects salient weight channels using activation magnitudes; typically beats GPTQ at 4-bit for quality."
-
+  notes: Protects salient weight channels using activation magnitudes; typically beats
+    GPTQ at 4-bit for quality.
 - id: smoothquant
   name: SmoothQuant
-  arxiv_id: "2211.10438"
+  arxiv_id: '2211.10438'
   repos:
-    - https://github.com/mit-han-lab/smoothquant
-  bits: [8]
-  quantizes: [weights, activations]
+  - https://github.com/mit-han-lab/smoothquant
+  bits:
+  - 8
+  quantizes:
+  - weights
+  - activations
   needs_calibration: true
   qat: false
-  inference_backends: [vllm, transformers]
+  inference_backends:
+  - vllm
+  - transformers
   template: null
   quality: 4
   speedup: 3
   maturity: 4
-  notes: "Migrates quantization difficulty from activations to weights via per-channel scaling. Enables W8A8."
-
+  notes: Migrates quantization difficulty from activations to weights via per-channel
+    scaling. Enables W8A8.
 - id: quip_sharp
-  name: "QuIP#"
-  arxiv_id: "2402.04396"
+  name: QuIP#
+  arxiv_id: '2402.04396'
   repos:
-    - https://github.com/Cornell-RelaxML/quip-sharp
-  bits: [2, 3, 4]
-  quantizes: [weights]
+  - https://github.com/Cornell-RelaxML/quip-sharp
+  bits:
+  - 2
+  - 3
+  - 4
+  quantizes:
+  - weights
   needs_calibration: true
   qat: false
-  inference_backends: [transformers]
+  inference_backends:
+  - transformers
   template: null
   quality: 5
   speedup: 2
   maturity: 3
-  notes: "Incoherence processing + lattice codebooks (E8). Pushes 2-bit to usable quality on large models."
-
+  notes: Incoherence processing + lattice codebooks (E8). Pushes 2-bit to usable quality
+    on large models.
 - id: spinquant
   name: SpinQuant
-  arxiv_id: "2405.16406"
+  arxiv_id: '2405.16406'
   repos:
-    - https://github.com/facebookresearch/SpinQuant
-  bits: [4, 8]
-  quantizes: [weights, activations, kv_cache]
+  - https://github.com/facebookresearch/SpinQuant
+  bits:
+  - 4
+  - 8
+  quantizes:
+  - weights
+  - activations
+  - kv_cache
   needs_calibration: true
   qat: false
-  inference_backends: [transformers]
+  inference_backends:
+  - transformers
   template: null
   quality: 5
   speedup: 3
   maturity: 3
-  notes: "Learned rotations (Cayley-optimized) applied to activations/weights to suppress outliers. Very strong W4A4."
-
-- id: hqq
-  name: Half-Quadratic Quantization
-  arxiv_id: null
-  repos:
-    - https://github.com/mobiusml/hqq
-  bits: [1, 2, 3, 4, 8]
-  quantizes: [weights]
-  needs_calibration: false
-  qat: false
-  inference_backends: [transformers]
-  template: hqq
-  quality: 4
-  speedup: 3
-  maturity: 4
-  notes: "Calibration-free PTQ using half-quadratic optimization. Fast to apply, good for quick experiments."
-
+  notes: Learned rotations (Cayley-optimized) applied to activations/weights to suppress
+    outliers. Very strong W4A4.
 - id: bnb_llm_int8
   name: bitsandbytes LLM.int8
-  arxiv_id: "2208.07339"
+  arxiv_id: '2208.07339'
   repos:
-    - https://github.com/bitsandbytes-foundation/bitsandbytes
-  bits: [8]
-  quantizes: [weights]
+  - https://github.com/bitsandbytes-foundation/bitsandbytes
+  bits:
+  - 8
+  quantizes:
+  - weights
   needs_calibration: false
   qat: false
-  inference_backends: [transformers]
+  inference_backends:
+  - transformers
   template: null
   quality: 5
   speedup: 2
   maturity: 5
-  notes: "Mixed-precision decomposition isolating outlier features at fp16. Drop-in via load_in_8bit=True."
-
+  notes: Mixed-precision decomposition isolating outlier features at fp16. Drop-in
+    via load_in_8bit=True.
 - id: bnb_nf4
   name: bitsandbytes NF4 (QLoRA)
-  arxiv_id: "2305.14314"
+  arxiv_id: '2305.14314'
   repos:
-    - https://github.com/bitsandbytes-foundation/bitsandbytes
-  bits: [4]
-  quantizes: [weights]
+  - https://github.com/bitsandbytes-foundation/bitsandbytes
+  bits:
+  - 4
+  quantizes:
+  - weights
   needs_calibration: false
   qat: false
-  inference_backends: [transformers]
+  inference_backends:
+  - transformers
   template: bnb_nf4
   quality: 4
   speedup: 3
   maturity: 5
-  notes: "4-bit NormalFloat data type + double quantization. Standard for QLoRA fine-tuning and fast inference."
-
-- id: gguf
-  name: GGUF / llama.cpp k-quants
-  arxiv_id: null
-  repos:
-    - https://github.com/ggerganov/llama.cpp
-  bits: [2, 3, 4, 5, 6, 8]
-  quantizes: [weights]
-  needs_calibration: false
-  qat: false
-  inference_backends: [llama_cpp, ollama, lm_studio]
-  template: null
-  quality: 4
-  speedup: 5
-  maturity: 5
-  notes: "Block-wise k-quants (Q4_K_M, Q5_K_M, etc.) for CPU/Metal/CUDA inference via llama.cpp."
-
+  notes: 4-bit NormalFloat data type + double quantization. Standard for QLoRA fine-tuning
+    and fast inference.
 - id: fp8
   name: FP8 (E4M3/E5M2)
-  arxiv_id: "2209.05433"
+  arxiv_id: '2209.05433'
   repos:
-    - https://github.com/NVIDIA/TransformerEngine
-    - https://github.com/pytorch/ao
-  bits: [8]
-  quantizes: [weights, activations, kv_cache]
+  - https://github.com/NVIDIA/TransformerEngine
+  - https://github.com/pytorch/ao
+  bits:
+  - 8
+  quantizes:
+  - weights
+  - activations
+  - kv_cache
   needs_calibration: true
   qat: false
-  inference_backends: [vllm, transformers, tensorrt_llm]
+  inference_backends:
+  - vllm
+  - transformers
+  - tensorrt_llm
   template: null
   quality: 5
   speedup: 4
   maturity: 4
-  notes: "Native FP8 on Hopper/Ada. Near-lossless at full activation+weight quantization."
-
+  notes: Native FP8 on Hopper/Ada. Near-lossless at full activation+weight quantization.
 - id: omniquant
   name: OmniQuant
-  arxiv_id: "2308.13137"
+  arxiv_id: '2308.13137'
   repos:
-    - https://github.com/OpenGVLab/OmniQuant
-  bits: [3, 4, 8]
-  quantizes: [weights, activations]
+  - https://github.com/OpenGVLab/OmniQuant
+  bits:
+  - 3
+  - 4
+  - 8
+  quantizes:
+  - weights
+  - activations
   needs_calibration: true
   qat: false
-  inference_backends: [transformers]
+  inference_backends:
+  - transformers
   template: null
   quality: 5
   speedup: 3
   maturity: 3
-  notes: "Learnable weight clipping + equivalent transformation. Strong at W4A4 and extreme low-bit."
-
+  notes: Learnable weight clipping + equivalent transformation. Strong at W4A4 and
+    extreme low-bit.
 - id: squeezellm
   name: SqueezeLLM
-  arxiv_id: "2306.07629"
+  arxiv_id: '2306.07629'
   repos:
-    - https://github.com/SqueezeAILab/SqueezeLLM
-  bits: [3, 4]
-  quantizes: [weights]
+  - https://github.com/SqueezeAILab/SqueezeLLM
+  bits:
+  - 3
+  - 4
+  quantizes:
+  - weights
   needs_calibration: true
   qat: false
-  inference_backends: [transformers]
+  inference_backends:
+  - transformers
   template: null
   quality: 4
   speedup: 3
   maturity: 3
-  notes: "Dense-and-sparse decomposition + sensitivity-based non-uniform quantization."
-
+  notes: Dense-and-sparse decomposition + sensitivity-based non-uniform quantization.
 - id: kivi
   name: KIVI (KV-cache quantization)
-  arxiv_id: "2402.02750"
+  arxiv_id: '2402.02750'
   repos:
-    - https://github.com/jy-yuan/KIVI
-  bits: [2, 4]
-  quantizes: [kv_cache]
+  - https://github.com/jy-yuan/KIVI
+  bits:
+  - 2
+  - 4
+  quantizes:
+  - kv_cache
   needs_calibration: false
   qat: false
-  inference_backends: [transformers]
+  inference_backends:
+  - transformers
   template: null
   quality: 4
   speedup: 3
   maturity: 3
-  notes: "Per-channel key, per-token value KV-cache quantization. Orthogonal to weight quantization for long-context memory."
-
+  notes: Per-channel key, per-token value KV-cache quantization. Orthogonal to weight
+    quantization for long-context memory.
 - id: llm_qat
   name: LLM-QAT
-  arxiv_id: "2305.17888"
+  arxiv_id: '2305.17888'
   repos:
-    - https://github.com/facebookresearch/LLM-QAT
-  bits: [4, 8]
-  quantizes: [weights, activations, kv_cache]
+  - https://github.com/facebookresearch/LLM-QAT
+  bits:
+  - 4
+  - 8
+  quantizes:
+  - weights
+  - activations
+  - kv_cache
   needs_calibration: false
   qat: true
-  inference_backends: [transformers]
+  inference_backends:
+  - transformers
   template: null
   quality: 5
   speedup: 3
   maturity: 3
-  notes: "Data-free QAT using outputs of the pretrained model as teacher. Use when you can afford fine-tuning compute."
-
-- id: marlin
-  name: Marlin (GPTQ/AWQ inference kernels)
-  arxiv_id: null
+  notes: Data-free QAT using outputs of the pretrained model as teacher. Use when
+    you can afford fine-tuning compute.
+- id: quarot
+  name: QuaRot
+  arxiv_id: '2404.00456'
   repos:
-    - https://github.com/IST-DASLab/marlin
-  bits: [4]
-  quantizes: [weights]
+  - https://github.com/spcl/QuaRot
+  bits:
+  - 4
+  quantizes:
+  - weights
+  - activations
+  - kv_cache
+  needs_calibration: true
+  qat: false
+  inference_backends:
+  - transformers
+  template: null
+  quality: 5
+  speedup: 3
+  maturity: 3
+  notes: ETH Zurich. Rotates LLMs with randomized Hadamard transforms to remove outliers,
+    enabling full W4A4KV4. Direct predecessor to FlatQuant and SpinQuant.
+- id: guidedquant
+  name: GuidedQuant
+  arxiv_id: '2505.07004'
+  repos:
+  - https://github.com/snu-mllab/GuidedQuant
+  bits:
+  - 2
+  - 3
+  - 4
+  - 8
+  quantizes:
+  - weights
+  - activations
+  needs_calibration: true
+  qat: false
+  inference_backends:
+  - transformers
+  template: null
+  quality: 5
+  speedup: 3
+  maturity: 3
+  notes: ICML 2025. Integrates end-loss gradient into layer-wise quantization objective.
+    Boosts GPTQ, AWQ and other methods rather than replacing them.
+- id: leanquant
+  name: LeanQuant
+  arxiv_id: '2407.10032'
+  repos:
+  - https://github.com/LeanModels/LeanQuant
+  bits:
+  - 2
+  - 3
+  - 4
+  - 8
+  quantizes:
+  - weights
+  needs_calibration: true
+  qat: false
+  inference_backends:
+  - transformers
+  template: null
+  quality: 5
+  speedup: 3
+  maturity: 3
+  notes: ICLR 2025. Loss-error-aware quantization grids overcome outlier sensitivity
+    in min-max affine grids. Scales to Llama-3.1 405B.
+- id: flatquant
+  name: FlatQuant
+  arxiv_id: '2410.09426'
+  repos:
+  - https://github.com/ruikangliu/FlatQuant
+  bits:
+  - 4
+  quantizes:
+  - weights
+  - activations
+  - kv_cache
+  needs_calibration: true
+  qat: false
+  inference_backends:
+  - transformers
+  template: null
+  quality: 5
+  speedup: 4
+  maturity: 3
+  notes: ICML 2025. Per-channel learnable affine transforms flatten outliers for W4A4.
+    Outperforms SpinQuant/QuaRot with only 0.07x latency overhead vs 0.26x for QuaRot.
+    SOTA W4A4 on LLaMA-3-70B.
+- id: atom
+  name: Atom
+  arxiv_id: '2310.19102'
+  repos:
+  - https://github.com/efeslab/Atom
+  bits:
+  - 4
+  quantizes:
+  - weights
+  - activations
+  - kv_cache
+  needs_calibration: true
+  qat: false
+  inference_backends:
+  - transformers
+  template: null
+  quality: 4
+  speedup: 4
+  maturity: 3
+  notes: Mixed-precision channel reordering for full W4A4KV4 quantization with strong
+    throughput.
+- id: aqlm
+  name: AQLM
+  arxiv_id: '2401.06118'
+  repos:
+  - https://github.com/Vahe1994/AQLM
+  bits:
+  - 2
+  - 3
+  - 4
+  quantizes:
+  - weights
+  needs_calibration: true
+  qat: false
+  inference_backends:
+  - transformers
+  - vllm
+  template: null
+  quality: 5
+  speedup: 3
+  maturity: 4
+  notes: ICML 2024. Additive quantization with learned codebooks. First Pareto-optimal
+    method below 2-bit — matches FP16 quality at 2-bit on large models.
+- id: vptq
+  name: VPTQ
+  arxiv_id: '2409.17066'
+  repos:
+  - https://github.com/microsoft/VPTQ
+  bits:
+  - 1
+  - 2
+  - 3
+  - 4
+  quantizes:
+  - weights
+  needs_calibration: true
+  qat: false
+  inference_backends:
+  - transformers
+  - vllm
+  template: null
+  quality: 5
+  speedup: 4
+  maturity: 4
+  notes: EMNLP 2024, Microsoft. Vector PTQ with second-order optimization. Compresses
+    70B and 405B models to 1-2 bits with residual+outlier quantization. 1.6-1.8x inference
+    speedup over SOTA.
+- id: autoround
+  name: AutoRound
+  arxiv_id: '2309.05516'
+  repos:
+  - https://github.com/intel/auto-round
+  bits:
+  - 2
+  - 3
+  - 4
+  - 8
+  quantizes:
+  - weights
+  needs_calibration: true
+  qat: false
+  inference_backends:
+  - vllm
+  - transformers
+  - sglang
+  template: null
+  quality: 5
+  speedup: 4
+  maturity: 4
+  notes: EMNLP 2024, Intel. Sign-gradient descent optimizes rounding and clipping
+    jointly. Quantizes 7B in ~10 min on single GPU. Exports to GPTQ/AWQ/GGUF formats.
+- id: duquant
+  name: DuQuant
+  arxiv_id: '2406.01721'
+  repos:
+  - https://github.com/Hsu1023/DuQuant
+  bits:
+  - 4
+  - 8
+  quantizes:
+  - weights
+  - activations
+  needs_calibration: true
+  qat: false
+  inference_backends:
+  - transformers
+  template: null
+  quality: 5
+  speedup: 4
+  maturity: 3
+  notes: NeurIPS 2024 Oral. Dual rotation+permutation transformations redistribute
+    both massive and normal outliers. Strong W4A4, outperforms SmoothQuant and QuaRot.
+- id: kvquant
+  name: KVQuant
+  arxiv_id: '2401.18079'
+  repos:
+  - https://github.com/SqueezeAILab/KVQuant
+  bits:
+  - 2
+  - 3
+  - 4
+  quantizes:
+  - kv_cache
+  needs_calibration: true
+  qat: false
+  inference_backends:
+  - transformers
+  template: null
+  quality: 5
+  speedup: 4
+  maturity: 3
+  notes: NeurIPS 2024. Per-channel key + pre-RoPE + non-uniform KV quantization. Enables
+    1M context on single A100-80GB at 3-bit with <0.1 perplexity degradation.
+- id: zipcache
+  name: ZipCache
+  arxiv_id: '2405.14256'
+  repos:
+  - https://github.com/ThisisBillhe/ZipCache
+  bits:
+  - 2
+  - 4
+  quantizes:
+  - kv_cache
   needs_calibration: false
   qat: false
-  inference_backends: [vllm]
+  inference_backends:
+  - transformers
+  template: null
+  quality: 4
+  speedup: 4
+  maturity: 3
+  notes: NeurIPS 2024. KV cache quantization with salient token identification. Superior
+    compression ratios and fast generation with minimal accuracy loss.
+- id: efficientqat
+  name: EfficientQAT
+  arxiv_id: '2407.11062'
+  repos:
+  - https://github.com/OpenGVLab/EfficientQAT
+  bits:
+  - 2
+  - 4
+  - 8
+  quantizes:
+  - weights
+  - activations
+  needs_calibration: false
+  qat: true
+  inference_backends:
+  - transformers
+  template: null
+  quality: 5
+  speedup: 3
+  maturity: 3
+  notes: 'ACL 2025. Two-phase QAT: block-wise training of all parameters then end-to-end
+    quantization parameter tuning. Best QAT method for LLMs without full retraining
+    cost.'
+- id: owq
+  name: OWQ
+  arxiv_id: '2306.02272'
+  repos:
+  - https://github.com/xvyaward/owq
+  bits:
+  - 3
+  - 4
+  quantizes:
+  - weights
+  needs_calibration: true
+  qat: false
+  inference_backends:
+  - transformers
+  template: null
+  quality: 4
+  speedup: 3
+  maturity: 4
+  notes: AAAI 2024 Oral. Outlier-aware weight quantization using Hessian-guided sensitivity.
+    Stores small fraction of sensitive weights in FP16 while quantizing the rest aggressively.
+- id: bitnet
+  name: BitNet b1.58
+  arxiv_id: '2402.17764'
+  repos:
+  - https://github.com/microsoft/BitNet
+  bits:
+  - 2
+  quantizes:
+  - weights
+  needs_calibration: false
+  qat: true
+  inference_backends:
+  - transformers
   template: null
   quality: 4
   speedup: 5
-  maturity: 4
-  notes: "FP16×INT4 GEMM kernels optimized for Ampere/Ada. Pairs with GPTQ/AWQ-quantized weights."
-
-- id: atom
-  name: Atom
-  arxiv_id: "2310.19102"
+  maturity: 3
+  notes: Microsoft. Ternary weights {-1, 0, 1} trained from scratch. Matches FP16
+    at same model size and tokens. Enables CPU-only inference. Requires retraining
+    — not a PTQ method.
+- id: spqr
+  name: SpQR
+  arxiv_id: '2306.03078'
   repos:
-    - https://github.com/efeslab/Atom
-  bits: [4]
-  quantizes: [weights, activations, kv_cache]
+  - https://github.com/Vahe1994/SpQR
+  bits:
+  - 3
+  - 4
+  quantizes:
+  - weights
   needs_calibration: true
   qat: false
-  inference_backends: [transformers]
+  inference_backends:
+  - transformers
+  template: null
+  quality: 5
+  speedup: 3
+  maturity: 3
+  notes: 'ICLR 2024. Sparse-quantized representation: outlier weights stored in FP16
+    sparse matrix, remaining weights at 3-4 bit. Near-lossless 3.4x compression with
+    20-30% faster generation.'
+- id: slim_llm
+  name: SliM-LLM
+  arxiv_id: '2405.14917'
+  repos:
+  - https://github.com/Aaronhuang-778/SliM-LLM
+  bits:
+  - 2
+  - 3
+  - 4
+  quantizes:
+  - weights
+  needs_calibration: true
+  qat: false
+  inference_backends:
+  - transformers
+  template: null
+  quality: 5
+  speedup: 3
+  maturity: 3
+  notes: 'ICML 2025. Salience-driven mixed-precision: adaptively assigns bit-widths
+    per group based on element-level salience. 48% perplexity reduction vs gradient-free
+    PTQ at 2-bit.'
+- id: paretoq
+  name: ParetoQ
+  arxiv_id: '2502.02631'
+  repos:
+  - https://github.com/facebookresearch/ParetoQ
+  bits:
+  - 1
+  - 2
+  - 3
+  - 4
+  quantizes:
+  - weights
+  needs_calibration: false
+  qat: true
+  inference_backends:
+  - transformers
+  template: null
+  quality: 5
+  speedup: 4
+  maturity: 3
+  notes: NeurIPS 2025, Meta. First unified framework spanning 1-4 bit quantization
+    with rigorous scaling laws. Reduces 1-bit WikiText perplexity from 27.4 to 9.5
+    vs prior SOTA.
+- id: zeroquant
+  name: ZeroQuant
+  arxiv_id: '2206.01861'
+  repos:
+  - https://github.com/microsoft/DeepSpeed
+  bits:
+  - 8
+  quantizes:
+  - weights
+  - activations
+  needs_calibration: true
+  qat: false
+  inference_backends:
+  - transformers
+  template: null
+  quality: 4
+  speedup: 3
+  maturity: 5
+  notes: Microsoft/DeepSpeed. Early influential W8A8 PTQ with token-wise activation
+    and group-wise weight quantization. Production-proven at scale via DeepSpeed integration.
+- id: zeroquant_v2
+  name: ZeroQuant-V2
+  arxiv_id: '2303.08302'
+  repos:
+  - https://github.com/microsoft/DeepSpeed
+  bits:
+  - 4
+  - 8
+  quantizes:
+  - weights
+  - activations
+  needs_calibration: true
+  qat: false
+  inference_backends:
+  - transformers
   template: null
   quality: 4
   speedup: 4
+  maturity: 5
+  notes: Microsoft/DeepSpeed. Improves ZeroQuant with optimal brain compression and
+    low-rank compensation. Extends to 4-bit weights. Production-ready via DeepSpeed.
+- id: llm_fp4
+  name: LLM-FP4
+  arxiv_id: '2310.16836'
+  repos:
+  - https://github.com/nbasyl/LLM-FP4
+  bits:
+  - 4
+  quantizes:
+  - weights
+  - activations
+  needs_calibration: true
+  qat: false
+  inference_backends:
+  - transformers
+  template: null
+  quality: 4
+  speedup: 3
   maturity: 3
-  notes: "Mixed-precision channel reordering for full W4A4KV4 quantization with strong throughput."
+  notes: EMNLP 2023. 4-bit floating-point quantization of both weights and activations.
+    Per-channel activation quantization with FP4 data type outperforms INT4 on distribution-heavy
+    activations.
+- id: outlier_suppression_plus
+  name: Outlier Suppression+
+  arxiv_id: '2304.09145'
+  repos:
+  - https://github.com/ModelTC/Outlier_Suppression_Plus
+  bits:
+  - 8
+  quantizes:
+  - weights
+  - activations
+  needs_calibration: true
+  qat: false
+  inference_backends:
+  - transformers
+  template: null
+  quality: 4
+  speedup: 3
+  maturity: 3
+  notes: Qualcomm/ModelTC. Channel-wise shifting and scaling to suppress activation
+    outliers before W8A8 quantization. Stronger than SmoothQuant on asymmetric outlier
+    distributions.
+- id: mxfp8
+  name: MX FP8 (Microscaling)
+  arxiv_id: '2310.10537'
+  repos:
+  - https://github.com/microsoft/microxcaling
+  bits:
+  - 8
+  quantizes:
+  - weights
+  - activations
+  needs_calibration: false
+  qat: false
+  inference_backends:
+  - vllm
+  - transformers
+  - tensorrt_llm
+  template: null
+  quality: 5
+  speedup: 5
+  maturity: 5
+  notes: Industry standard (Microsoft/AMD/Intel/NVIDIA). Microscaling FP8 format with
+    shared exponent per block. Native hardware support on Hopper/Ada/MI300X. Zero
+    accuracy loss vs FP16 in most cases.

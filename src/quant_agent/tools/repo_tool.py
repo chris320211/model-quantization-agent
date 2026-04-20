@@ -21,6 +21,7 @@ from pathlib import Path
 from langchain_core.tools import tool
 
 from ..config import REPO_ROOT
+from .torch_spec import detect_torch_spec
 
 VENV_ROOT = REPO_ROOT / ".venvs"
 _INSTALL_TIMEOUT = 900
@@ -28,11 +29,15 @@ _RUN_TIMEOUT_DEFAULT = 120
 _OUTPUT_TAIL_LINES = 60
 _READ_MAX_BYTES = 20_000
 
-_BASELINE_PACKAGES = [
-    "pip install --upgrade pip wheel",
-    "pip install --index-url https://download.pytorch.org/whl/cu121 torch==2.3.1",
-    "pip install transformers accelerate safetensors sentencepiece",
-]
+
+def _baseline_packages() -> list[str]:
+    """Baseline install steps, with a torch pin chosen for the local GPU."""
+    spec = detect_torch_spec()
+    return [
+        "pip install --upgrade pip wheel",
+        spec.pip_install(),
+        "pip install transformers accelerate safetensors sentencepiece",
+    ]
 
 
 def _venv_dir(method_id: str) -> Path:
@@ -132,7 +137,7 @@ def install_method_venv(method_id: str, install_steps: list[str]) -> str:
 
     activate = f"source {venv_dir}/bin/activate"
     results: list[dict] = []
-    for step in _BASELINE_PACKAGES + list(install_steps):
+    for step in _baseline_packages() + list(install_steps):
         cmd = f"{activate} && {step}"
         r = _run(cmd, cwd=repo, timeout=_INSTALL_TIMEOUT)
         results.append({"step": step, **r})

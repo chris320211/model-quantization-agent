@@ -40,22 +40,30 @@ def _hf_search(query: str, limit: int = 3) -> list[str]:
     s = load_settings()
     try:
         api = HfApi(token=s.hf_token)
-        results = api.list_models(search=query, limit=limit, sort="downloads", direction=-1)
+        results = api.list_models(search=query, limit=limit, sort="downloads")
         return [m.modelId for m in results]
     except Exception as e:  # noqa: BLE001 — HF Hub can fail for many reasons
         log.warning("HfApi.list_models search failed for %r: %s", query, e)
         return []
 
 
+_HF_ID_RE = re.compile(r"^[A-Za-z0-9][\w.\-]*/[\w.\-]+$")
+
+
 def resolve(name: str) -> ResolveResult:
     """Resolve a fuzzy model name to a canonical HuggingFace id.
 
     Order of preference:
-      1. Exact (normalized) alias hit in seed/model_aliases.yaml.
-      2. HfApi.list_models(search=name) — returns up to 3 candidates for the user to pick.
-      3. Unresolved — empty candidates list.
+      1. Exact ``org/repo`` form → pass through (user already gave a canonical id).
+      2. Exact (normalized) alias hit in seed/model_aliases.yaml.
+      3. HfApi.list_models(search=name) — returns up to 3 candidates for the user to pick.
+      4. Unresolved — empty candidates list.
     """
-    norm = _normalize(name)
+    trimmed = name.strip()
+    if _HF_ID_RE.match(trimmed):
+        return ResolveResult(model_id=trimmed, candidates=[trimmed], source="alias")
+
+    norm = _normalize(trimmed)
     aliases = _load_aliases()
     if norm in aliases:
         return ResolveResult(model_id=aliases[norm], candidates=[aliases[norm]], source="alias")

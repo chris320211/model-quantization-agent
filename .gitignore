@@ -13,3 +13,5 @@ __pycache__/
 .venv/
 venv/
 .DS_Store
+.agent.txt
+.keepalive.txt

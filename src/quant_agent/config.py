@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -28,6 +29,7 @@ class Settings:
     hf_token: str | None
 
 
+@lru_cache(maxsize=1)
 def load_settings() -> Settings:
     key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if not key or key.startswith("sk-ant-REPLACE"):

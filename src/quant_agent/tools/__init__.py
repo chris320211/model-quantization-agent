@@ -1,5 +1,4 @@
 from .rag import rag_search, rag_survey
-from .arxiv_tool import arxiv_fetch
 from .github_tool import github_readme, github_list_dir, github_file
 from .hf_hub import hf_model_info
 from .gpu_info import gpu_info
@@ -11,6 +10,7 @@ from .executor_tools import (
     tail_job_logs,
     kill_job,
     read_job_logs,
+    read_script,
     edit_script,
     relaunch_job,
 )
@@ -26,7 +26,6 @@ from .script_io import ValidationSession, make_write_script_tool, validate
 __all__ = [
     "rag_search",
     "rag_survey",
-    "arxiv_fetch",
     "github_readme",
     "github_list_dir",
     "github_file",
@@ -39,6 +38,7 @@ __all__ = [
     "tail_job_logs",
     "kill_job",
     "read_job_logs",
+    "read_script",
     "edit_script",
     "relaunch_job",
     "ValidationSession",

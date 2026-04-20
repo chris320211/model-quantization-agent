@@ -109,6 +109,35 @@ def read_job_logs(job_id: str, n_lines: int = 200) -> str:
     )
 
 
+_SCRIPT_READ_MAX_BYTES = 20_000
+
+
+@tool
+def read_script(job_id: str, max_bytes: int = _SCRIPT_READ_MAX_BYTES) -> str:
+    """Return the current contents of a job's saved script (jobs/<id>/script.py).
+
+    Call this BEFORE edit_script so you know the exact text to replace. Truncates
+    at ``max_bytes`` and reports the truncation so you can re-read with a larger
+    cap if needed.
+    """
+    script = executor.JOBS_ROOT / job_id / "script.py"
+    if not script.exists():
+        return json.dumps({"status": "error", "error": f"no such script: {script}"})
+    data = script.read_bytes()
+    truncated = len(data) > max_bytes
+    text = data[:max_bytes].decode("utf-8", errors="replace")
+    return json.dumps(
+        {
+            "status": "ok",
+            "path": str(script),
+            "size_bytes": len(data),
+            "truncated": truncated,
+            "content": text,
+        },
+        indent=2,
+    )
+
+
 @tool
 def edit_script(job_id: str, old: str, new: str) -> str:
     """Apply a single str.replace edit to the failed job's saved script (jobs/<id>/script.py).

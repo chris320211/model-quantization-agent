@@ -26,6 +26,7 @@ from .tools import (
     list_repo_dir,
     read_job_logs,
     read_repo_file,
+    read_script,
     relaunch_job,
     run_in_venv,
 )
@@ -47,6 +48,10 @@ Workflow — follow in order:
 
   1. read_job_logs(job_id="{job_id}") — read the stdout + stderr tail. Identify the
      failing step and the root-cause error line.
+
+  1b. If you plan to call edit_script, call read_script(job_id="{job_id}") FIRST
+      so you know the exact text in the script. edit_script's `old` arg must match
+      the file's content exactly once — guessing from the traceback is unreliable.
 
   2. Classify the failure and pick ONE fix:
        - ImportError / ModuleNotFoundError → `install_method_venv` with a targeted
@@ -108,6 +113,7 @@ def run(
 
     tools = [
         read_job_logs,
+        read_script,
         run_in_venv,
         install_method_venv,
         list_repo_dir,

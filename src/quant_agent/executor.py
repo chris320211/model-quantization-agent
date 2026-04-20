@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import shlex
 import signal
 import subprocess
 import time
@@ -102,9 +103,11 @@ def launch(
     exit_sentinel = job_dir / "exit_code"
 
     # wrapper records the real exit code so status is known even after the
-    # child process has been reaped.
+    # child process has been reaped. Paths go through shlex.quote so method_id
+    # or job_id values never cross into shell-interpreted territory.
     wrapper = (
-        f'"{py}" "{script_path}"; echo $? > "{exit_sentinel}"'
+        f"{shlex.quote(str(py))} {shlex.quote(str(script_path))}; "
+        f"echo $? > {shlex.quote(str(exit_sentinel))}"
     )
     proc = subprocess.Popen(
         ["bash", "-c", wrapper],

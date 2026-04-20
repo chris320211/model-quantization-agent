@@ -6,7 +6,25 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from quant_agent import orchestrator
-from quant_agent.schemas import MethodCandidate, ResearchReport
+from quant_agent.executor import JobMeta
+from quant_agent.schemas import ConsideredMethod, MethodCandidate, ResearchReport
+
+
+def _make_meta(job_id: str, status: str, exit_code: int | None = None, attempt: int = 1, parent: str | None = None) -> JobMeta:
+    return JobMeta(
+        job_id=job_id,
+        method_id="gptq",
+        model_id="meta-llama/Llama-2-7b-hf",
+        venv="gptq",
+        script_path=f"/tmp/jobs/{job_id}/script.py",
+        output_dir="/tmp/out",
+        pid=1234,
+        started_at="2026-04-19T00:00:00+00:00",
+        status=status,
+        exit_code=exit_code,
+        attempt=attempt,
+        parent_job_id=parent,
+    )
 
 
 def _fixture_report() -> ResearchReport:
@@ -15,6 +33,14 @@ def _fixture_report() -> ResearchReport:
         params_b=6.74,
         instance_type="g5.xlarge",
         vram_gb=24.0,
+        compute_capability=8.6,
+        gpu_arch="Ampere",
+        considered=[
+            ConsideredMethod(id="awq", verdict="include", reason="Llama supported; sm_86 OK."),
+            ConsideredMethod(id="gptq", verdict="include", reason="Llama supported; widely adopted."),
+            ConsideredMethod(id="bnb_nf4", verdict="include", reason="Calibration-free; fits 24GB."),
+            ConsideredMethod(id="fp8", verdict="reject", reason="FP8 needs Hopper sm_90; A10G is sm_86."),
+        ],
         methods=[
             MethodCandidate(
                 id="awq",
@@ -39,15 +65,15 @@ def _fixture_report() -> ResearchReport:
                 summary="GPTQ summary",
             ),
             MethodCandidate(
-                id="hqq",
-                name="HQQ",
-                repo_url="https://github.com/mobiusml/hqq",
+                id="bnb_nf4",
+                name="bitsandbytes NF4 (QLoRA)",
+                repo_url="https://github.com/bitsandbytes-foundation/bitsandbytes",
                 bits=4,
                 est_vram_gb=4.9,
                 quality_score=4,
                 speed_score=3,
                 needs_calibration=False,
-                summary="HQQ summary",
+                summary="NF4 summary",
             ),
         ],
         tradeoffs="AWQ vs GPTQ vs HQQ paragraph",
@@ -60,9 +86,15 @@ def test_format_report_includes_methods_and_tradeoffs():
     assert "Llama-2-7b" in out
     assert "g5.xlarge" in out
     assert "24 GB" in out
+    assert "Ampere" in out
+    assert "sm_86" in out
+    assert "Considered methods" in out
+    assert "[INCLUDE]" in out
+    assert "[reject " in out
+    assert "fp8" in out
     assert "1. AWQ" in out
     assert "2. GPTQ" in out
-    assert "3. HQQ" in out
+    assert "bnb_nf4" in out
     assert "Tradeoffs:" in out
 
 
@@ -90,6 +122,9 @@ def test_run_invokes_adapt_and_execute_with_second_choice(monkeypatch):
     exec_invoke = MagicMock(return_value=execute_payload)
     fake_tool = SimpleNamespace(invoke=exec_invoke)
     monkeypatch.setattr(orchestrator, "execute_quantization", fake_tool)
+    monkeypatch.setattr(
+        orchestrator.executor, "wait_for_job", lambda jid: _make_meta(jid, "completed", 0)
+    )
 
     result = orchestrator.run("port llama2 7b to g5.xlarge")
 
@@ -148,3 +183,120 @@ def test_research_fixture_ids_are_in_catalog():
     ids = {m["id"] for m in load_catalog()}
     for mc in _fixture_report().methods:
         assert mc.id in ids
+
+
+def test_supervise_retries_until_success(monkeypatch):
+    report = _fixture_report()
+    chosen = report.methods[0]  # awq
+
+    wait_calls: list[str] = []
+    fake_metas = iter(
+        [
+            _make_meta("JOB1", "failed", exit_code=1, attempt=1),
+            _make_meta("JOB2", "completed", exit_code=0, attempt=2, parent="JOB1"),
+        ]
+    )
+
+    def fake_wait(job_id):
+        wait_calls.append(job_id)
+        return next(fake_metas)
+
+    fix_calls: list[dict] = []
+
+    def fake_fix(**kwargs):
+        fix_calls.append(kwargs)
+        return "JOB2"
+
+    monkeypatch.setattr(orchestrator.executor, "wait_for_job", fake_wait)
+    monkeypatch.setattr(orchestrator.fix_agent, "run", fake_fix)
+
+    final, chain = orchestrator._supervise("JOB1", chosen, "meta-llama/Llama-2-7b-hf", max_repairs=3)
+
+    assert [m.job_id for m in chain] == ["JOB1", "JOB2"]
+    assert final.status == "completed"
+    assert len(fix_calls) == 1
+    assert fix_calls[0]["job_id"] == "JOB1"
+    assert fix_calls[0]["attempt"] == 1
+
+
+def test_supervise_gives_up_after_max_repairs(monkeypatch):
+    report = _fixture_report()
+    chosen = report.methods[0]
+
+    counter = {"n": 0}
+
+    def fake_wait(job_id):
+        counter["n"] += 1
+        return _make_meta(job_id, "failed", exit_code=1, attempt=counter["n"])
+
+    def fake_fix(**kwargs):
+        return f"JOB{kwargs['attempt'] + 1}"
+
+    monkeypatch.setattr(orchestrator.executor, "wait_for_job", fake_wait)
+    monkeypatch.setattr(orchestrator.fix_agent, "run", fake_fix)
+
+    final, chain = orchestrator._supervise("JOB1", chosen, "model", max_repairs=3)
+
+    # Initial job + 3 repair attempts = 4 metas in the chain.
+    assert len(chain) == 4
+    assert final.status == "failed"
+
+
+def test_supervise_stops_on_non_retryable(monkeypatch):
+    report = _fixture_report()
+    chosen = report.methods[0]
+
+    monkeypatch.setattr(
+        orchestrator.executor, "wait_for_job",
+        lambda jid: _make_meta(jid, "failed", exit_code=1),
+    )
+    monkeypatch.setattr(orchestrator.fix_agent, "run", lambda **kw: None)
+
+    final, chain = orchestrator._supervise("JOB1", chosen, "model", max_repairs=3)
+
+    assert len(chain) == 1
+    assert final.status == "failed"
+
+
+def test_supervise_skips_retry_on_killed(monkeypatch):
+    report = _fixture_report()
+    chosen = report.methods[0]
+
+    monkeypatch.setattr(
+        orchestrator.executor, "wait_for_job",
+        lambda jid: _make_meta(jid, "killed"),
+    )
+    fix_mock = MagicMock()
+    monkeypatch.setattr(orchestrator.fix_agent, "run", fix_mock)
+
+    final, chain = orchestrator._supervise("JOB1", chosen, "model", max_repairs=3)
+
+    fix_mock.assert_not_called()
+    assert final.status == "killed"
+    assert len(chain) == 1
+
+
+def test_run_with_max_repairs_zero_skips_supervise(monkeypatch):
+    report = _fixture_report()
+
+    monkeypatch.setattr(orchestrator.sys, "stdin", io.StringIO("1\n"))
+    monkeypatch.setattr(orchestrator.research_agent, "run", lambda _: report)
+    monkeypatch.setattr(
+        orchestrator.adapt_agent,
+        "run",
+        lambda model_id, method: ("/tmp/out/script.py", "code"),
+    )
+
+    execute_payload = json.dumps({"job_id": "JOB1", "pid": 1, "status": "running"})
+    monkeypatch.setattr(
+        orchestrator,
+        "execute_quantization",
+        SimpleNamespace(invoke=MagicMock(return_value=execute_payload)),
+    )
+    wait_mock = MagicMock()
+    monkeypatch.setattr(orchestrator.executor, "wait_for_job", wait_mock)
+
+    result = orchestrator.run("whatever", max_repairs=0)
+
+    wait_mock.assert_not_called()
+    assert "Job launched: JOB1" in result

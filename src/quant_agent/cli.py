@@ -45,9 +45,14 @@ def ask_cmd(
     dry: bool = typer.Option(
         False, "--dry", help="Stop after writing the validated script; skip execution."
     ),
+    max_repairs: int = typer.Option(
+        3,
+        "--max-repairs",
+        help="Runtime-failure repair attempts on the chosen method (0 disables).",
+    ),
 ) -> None:
     """Research → pick → Adapt → execute (unless --dry)."""
-    typer.echo(orchestrator_module.run(request, dry=dry))
+    typer.echo(orchestrator_module.run(request, dry=dry, max_repairs=max_repairs))
 
 
 @app.command("adapt")

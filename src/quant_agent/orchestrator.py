@@ -11,8 +11,9 @@ import sys
 
 import typer
 
-from . import adapt_agent, research_agent
-from .schemas import ResearchReport
+from . import adapt_agent, executor, fix_agent, research_agent
+from .executor import JobMeta
+from .schemas import MethodCandidate, ResearchReport
 from .tools.executor_tools import execute_quantization
 
 
@@ -27,7 +28,15 @@ def format_report(report: ResearchReport) -> str:
             parts.append(report.instance_type)
         if report.vram_gb is not None:
             parts.append(f"{report.vram_gb:g} GB VRAM")
+        if report.gpu_arch:
+            cc = f" sm_{int(report.compute_capability * 10)}" if report.compute_capability else ""
+            parts.append(f"{report.gpu_arch}{cc}")
         lines.append(f"Hardware: {' / '.join(parts)}")
+    lines.append("")
+    lines.append(f"Considered methods ({len(report.considered)}):")
+    for c in report.considered:
+        tag = "INCLUDE" if c.verdict == "include" else "reject "
+        lines.append(f"  [{tag}] {c.id:<24} {c.reason}")
     lines.append("")
     lines.append("Candidate methods:")
     for i, m in enumerate(report.methods, 1):
@@ -85,28 +94,137 @@ def _format_handoff(script_path: str, job_payload: str | None) -> str:
     return "\n".join(out)
 
 
-def run(user_input: str, dry: bool = False) -> str:
+def _supervise(
+    initial_job_id: str,
+    chosen: MethodCandidate,
+    model_id: str,
+    max_repairs: int,
+) -> tuple[JobMeta, list[JobMeta]]:
+    """Wait on the initial job; on runtime failure, invoke fix_agent up to max_repairs times.
+
+    Returns (final_meta, chain) where chain is the ordered list of all job metas
+    involved (initial + any relaunches). ``final_meta`` is the last meta seen —
+    completed, failed after exhausting repairs, killed, or non-retryable.
+    """
+    meta = executor.wait_for_job(initial_job_id)
+    chain: list[JobMeta] = [meta]
+
+    for attempt in range(1, max_repairs + 1):
+        if meta.status == "completed":
+            return meta, chain
+        if meta.status != "failed":
+            # killed or any other non-failed terminal state: don't retry
+            return meta, chain
+
+        typer.echo(
+            f"\n[fix] attempt {attempt}/{max_repairs}: job {meta.job_id} failed "
+            f"(exit {meta.exit_code}). Invoking fix agent...",
+            err=True,
+        )
+        try:
+            new_job_id = fix_agent.run(
+                job_id=meta.job_id,
+                method=chosen,
+                model_id=model_id,
+                attempt=attempt,
+                max_attempts=max_repairs,
+            )
+        except Exception as e:  # noqa: BLE001 — any fix failure stops the loop
+            typer.echo(f"[fix] fix agent errored: {e}", err=True)
+            return meta, chain
+
+        if new_job_id is None:
+            typer.echo(
+                "[fix] fix agent classified failure as non-retryable; stopping.",
+                err=True,
+            )
+            return meta, chain
+
+        meta = executor.wait_for_job(new_job_id)
+        chain.append(meta)
+
+    return meta, chain
+
+
+def _format_supervise_trail(chain: list[JobMeta]) -> str:
+    lines: list[str] = []
+    for m in chain:
+        tag = f"attempt {m.attempt}"
+        status_line = f"Job {m.job_id} ({tag}): {m.status}"
+        if m.exit_code is not None:
+            status_line += f" (exit {m.exit_code})"
+        lines.append(status_line)
+    final = chain[-1]
+    lines.append(
+        f"Final status: {final.status}"
+        + (f" (exit {final.exit_code})" if final.exit_code is not None else "")
+    )
+    lines.append(
+        f"Monitor: quant-agent jobs logs {final.job_id} -n 200   "
+        f"|   quant-agent jobs status {final.job_id}"
+    )
+    return "\n".join(lines)
+
+
+def run(user_input: str, dry: bool = False, max_repairs: int = 3) -> str:
     report = research_agent.run(user_input)
     typer.echo(format_report(report), err=True)
 
     idx = prompt_selection(len(report.methods))
     if idx is None:
         return "aborted"
-    chosen = report.methods[idx - 1]
 
-    script_path, script_code = adapt_agent.run(
-        model_id=report.resolved_model_id,
-        method=chosen,
-    )
+    # Try the user's pick first, then fall back through the remaining candidates
+    # in report order if Adapt fails (clone/install/write errors). User chose
+    # auto-fallback over abort or re-prompt.
+    order = [idx - 1] + [i for i in range(len(report.methods)) if i != idx - 1]
 
-    if dry:
-        return _format_handoff(script_path, None)
+    last_error: Exception | None = None
+    for pos, i in enumerate(order):
+        chosen = report.methods[i]
+        if pos > 0:
+            typer.echo(
+                f"\n[fallback] Previous candidate failed: {last_error}. "
+                f"Trying next candidate: {chosen.name} ({chosen.id}).",
+                err=True,
+            )
+        try:
+            script_path, script_code = adapt_agent.run(
+                model_id=report.resolved_model_id,
+                method=chosen,
+            )
+        except Exception as e:  # noqa: BLE001 — any adapt failure triggers fallback
+            last_error = e
+            continue
 
-    job_payload = execute_quantization.invoke(
-        {
-            "method_id": chosen.id,
-            "model_id": report.resolved_model_id,
-            "script_code": script_code,
-        }
-    )
-    return _format_handoff(script_path, job_payload)
+        if dry:
+            return _format_handoff(script_path, None)
+
+        job_payload = execute_quantization.invoke(
+            {
+                "method_id": chosen.id,
+                "model_id": report.resolved_model_id,
+                "script_code": script_code,
+            }
+        )
+
+        handoff = _format_handoff(script_path, job_payload)
+        try:
+            job = json.loads(job_payload)
+        except json.JSONDecodeError:
+            return handoff
+        if "error" in job or "job_id" not in job:
+            return handoff
+
+        if max_repairs <= 0:
+            return handoff
+
+        final, chain = _supervise(
+            initial_job_id=job["job_id"],
+            chosen=chosen,
+            model_id=report.resolved_model_id,
+            max_repairs=max_repairs,
+        )
+        return handoff + "\n\n" + _format_supervise_trail(chain)
+
+    return f"All {len(order)} candidates failed. Last error: {last_error}"

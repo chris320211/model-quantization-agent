@@ -1,13 +1,17 @@
-"""Adapt agent: read the chosen method's real repo and author a quantization script.
+"""Adapt agent: clone the method's repo, build its venv, and author a script.
 
-This is a ReAct loop (`create_react_agent`) with a narrow toolset. The agent:
-  1. Reads the repo README and a few entry-point files via GitHub contents API.
-  2. Grounds the library API in what it actually sees there (no Jinja templates).
-  3. Writes a script via `write_script`, which validates (ast.parse + dry-import in the
-     method venv) before committing to disk. On failure it retries up to 3 times.
+ReAct loop that:
+  1. Reads the repo README to learn install + usage.
+  2. Clones the repo into .venvs/<method_id>/repo/.
+  3. Builds a method-specific venv at .venvs/<method_id>/ and runs the repo's
+     install steps (torch + transformers baseline installed automatically).
+  4. Inspects the cloned source locally to find an example entry point.
+  5. Writes either a standalone script (importing the installed library) or a
+     wrapper that subprocess-invokes the repo's example with filled-in args.
+  6. Validates via ast.parse + dry-import (stdlib-only wrappers pass trivially).
 
-Returns (script_path, script_code) on success — the orchestrator then hands the code
-off to execute_quantization.
+Returns (script_path, script_code) — the orchestrator hands the code off to the
+executor, which launches it with .venvs/<method_id>/bin/python.
 """
 from __future__ import annotations
 
@@ -22,20 +26,24 @@ from langgraph.prebuilt import create_react_agent
 from .config import load_settings
 from .schemas import MethodCandidate
 from .tools import (
+    clone_method_repo,
     github_file,
     github_list_dir,
     github_readme,
     hf_model_info,
+    install_method_venv,
+    list_repo_dir,
+    read_repo_file,
+    run_in_venv,
 )
 from .tools.rag import rag_search
 from .tools.script_io import ValidationSession, make_write_script_tool
 
 log = logging.getLogger(__name__)
 
-_PROMPT = """You are the Adapt agent. You have been handed a quantization method chosen
-from a catalog and a target HuggingFace model. Your job is to produce a single Python
-script that quantizes the user's model using the REAL API of the chosen repo — not a
-guess, not a template.
+_PROMPT = """You are the Adapt agent. A quantization method has been chosen from the catalog
+and you must author a Python script that quantizes the user's model using that method's
+real implementation — cloned from its GitHub repo.
 
 Chosen method:
   id:        {method_id}
@@ -46,36 +54,75 @@ Chosen method:
 Target model: {model_id}
 Output script path: {script_path}
 
-Workflow (follow in order):
-  1. Call `github_readme(repo_url)` to learn the intended usage.
-  2. Call `github_list_dir(repo_url, path="")` to see the layout. If helpful, drill into
-     likely directories (examples/, scripts/, src/, <package>/).
-  3. Call `github_file(repo_url, path=...)` on 1-3 files that look like the quantization
-     entry point (common names: quantize.py, main.py, examples/basic_usage.py,
-     auto_gptq/, awq/quantize/quantizer.py, hqq/core/quantize.py).
-  4. If you need background on the method itself, `rag_search(query, method_id="{method_id}")`
-     returns chunks filtered to this method.
-  5. Write the full script via `write_script(path="{script_path}", code=...)`. The tool
-     validates the code (ast.parse + top-level dry-import against the method venv) and
-     returns status="ok" on success, or status="error" with attempts_left on failure.
-     Fix reported errors and retry. Stop as soon as status="ok".
+Per-method paths (created by the tools below):
+  venv:       .venvs/{method_id}/            (python at .venvs/{method_id}/bin/python)
+  cloned repo: .venvs/{method_id}/repo/
 
-Script requirements:
-  - Must be a standalone Python script runnable by the method venv's python.
-  - Must load the model from HF by id `{model_id}`.
-  - Must write the quantized model to the CWD under ./quantized/<method>-<model>/ using
-    the library's native save API (e.g. save_quantized / save_pretrained).
-  - Must import the real library API surface you saw in the repo files — no invented names.
-  - No CLI argparse is needed; hardcode the model id and output dir.
-  - HuggingFace auth: if the target model is gated (meta-llama/*, mistralai/Mixtral-*,
-    google/gemma-*, and similar), the script MUST read the token from the environment
-    (`HF_TOKEN = os.environ.get("HUGGINGFACE_HUB_TOKEN") or os.environ.get("HF_TOKEN")`)
-    and pass it to every loader/tokenizer call that accepts an auth kwarg (e.g.
-    `from_pretrained(..., token=HF_TOKEN)`, `login(token=HF_TOKEN)`, or the repo's own
-    `hf_token=` argument). Do NOT hardcode the token and do NOT pass `None` if the
-    environment variable is available at runtime.
+Workflow — follow in order:
 
-Stop calling tools once `write_script` returns status="ok".
+  1. github_readme(repo_url="{repo_url}") — learn install + usage.
+
+  2. clone_method_repo(method_id="{method_id}", repo_url="{repo_url}")
+     Clones to .venvs/{method_id}/repo/ (idempotent).
+
+  3. Identify `install_steps` from the README. Examples:
+        Research repos:     ["pip install -r requirements.txt", "pip install -e ."]
+                            or ["pip install -e ."]
+        Pip-packaged libs:  ["pip install autoawq"]   (for awq)
+                            ["pip install gptqmodel datasets"]   (for gptq)
+                            ["pip install hqq"]   (for hqq)
+                            ["pip install bitsandbytes"]   (for bnb_nf4/bnb_llm_int8)
+     A baseline of torch==2.3.1 (cu121) + transformers + accelerate + safetensors +
+     sentencepiece is ALWAYS installed first. Do NOT duplicate those in install_steps.
+
+  4. install_method_venv(method_id="{method_id}", install_steps=[...])
+     Creates the venv and runs the steps. If it errors:
+       - Read the last stderr lines carefully.
+       - Adjust install_steps (add a missing dep, drop an optional broken step).
+       - Retry ONCE. If it still fails, write a best-effort script anyway — the
+         executor will surface the real error at runtime.
+
+  5. Find the example entry point in the cloned repo:
+       list_repo_dir(method_id="{method_id}", path="examples")
+       list_repo_dir(method_id="{method_id}", path="scripts")
+       list_repo_dir(method_id="{method_id}", path="")   (if needed)
+     Then read_repo_file on 1–2 most-likely entry files to see their API.
+
+  6. (Optional but recommended) run_in_venv(method_id="{method_id}",
+        command="python <entry_path> --help") to confirm the entry is invokable
+     and to discover the real arg flag names.
+
+  7. Decide the script style and write it via
+     write_script(path="{script_path}", code=...):
+
+     STYLE A — Standalone import (preferred when the method has a stable Python API,
+     e.g. autoawq, gptqmodel, hqq, bitsandbytes, or an importable module in the
+     cloned repo). Write a single Python file that imports the library and runs
+     quantization in-process. Must load the model from HF by id `{model_id}` and
+     save output to ./quantized/{method_id}-<safe_model>/.
+
+     STYLE B — Wrapper subprocess (preferred for research repos whose usage is
+     "python examples/foo.py --model ..."). Write a Python file that:
+        - import sys, os, subprocess, pathlib
+        - Reads HF_TOKEN from env (HUGGINGFACE_HUB_TOKEN or HF_TOKEN) and passes it
+          into the child env.
+        - Computes REPO = pathlib.Path(".venvs/{method_id}/repo").resolve()
+        - subprocess.run([sys.executable, "<entry_path_relative_to_repo>",
+                          "<flag_name>", "{model_id}", "<output_flag>", str(OUT)],
+                          cwd=REPO, env={{**os.environ, ...}}, check=True)
+        - OUT = pathlib.Path("./quantized/{method_id}-<safe_model>").resolve()
+        - The EXACT flag names MUST come from the --help output or the example source
+          you read — do NOT invent flag names.
+
+     Both styles must:
+       - Quantize the real model at `{model_id}`.
+       - Handle HF gated models: read HF_TOKEN from env and pass to every loader/
+         tokenizer call (or login()) and into the child env for wrapper style.
+       - Print a final line with the quantized model's on-disk size so success is
+         visible in stdout.
+
+Stop as soon as write_script returns status="ok". Do not call run_in_venv on the
+wrapper itself — the executor will launch it.
 """
 
 
@@ -85,7 +132,6 @@ def _safe_slug(s: str) -> str:
 
 def _read_output_file(path: Path) -> str:
     text = path.read_text()
-    # Strip the validation-failure banner if write_script had to write in exhausted mode.
     if text.startswith("# WARNING: failed validation"):
         lines = text.splitlines()
         return "\n".join(lines[1:])
@@ -105,13 +151,18 @@ def run(model_id: str, method: MethodCandidate) -> tuple[str, str]:
 
     @tool
     def rag_search_for_method(query: str, k: int = 6) -> str:
-        """Search the local quantization-literature index, scoped to the chosen method."""
+        """Search the quantization-literature index, scoped to the chosen method."""
         return rag_search.invoke({"query": query, "k": k, "method_id": method.id})
 
     tools = [
         github_readme,
         github_list_dir,
         github_file,
+        clone_method_repo,
+        install_method_venv,
+        run_in_venv,
+        list_repo_dir,
+        read_repo_file,
         rag_search_for_method,
         hf_model_info,
         write_script,
@@ -134,10 +185,11 @@ def run(model_id: str, method: MethodCandidate) -> tuple[str, str]:
                 (
                     "user",
                     f"Port {model_id} to {method.name} ({method.bits}-bit). "
-                    f"Write the script to {script_path}.",
+                    f"Clone the repo, build the venv, write the script to {script_path}.",
                 )
             ]
-        }
+        },
+        config={"recursion_limit": 60},
     )
 
     if not script_path.exists():

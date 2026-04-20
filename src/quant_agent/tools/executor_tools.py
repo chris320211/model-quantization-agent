@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import ast
 import json
 from dataclasses import asdict
+from pathlib import Path
 
 from langchain_core.tools import tool
 
@@ -17,9 +19,10 @@ def execute_quantization(
 ) -> str:
     """Launch the quantization script in the background on this EC2 box and return a job_id.
 
-    The script runs in the method-specific venv (set up by scripts/bootstrap_ec2.sh)
-    and survives SSH disconnects. The tool returns immediately — use `check_job(job_id)`
-    to poll status and `tail_job_logs(job_id)` to read recent logs.
+    The script runs in the method-specific venv at .venvs/<method_id>/ (built by
+    the Adapt agent via install_method_venv) and survives SSH disconnects. The tool
+    returns immediately — use `check_job(job_id)` to poll status and `tail_job_logs(job_id)`
+    to read recent logs.
 
     Args:
         method_id:   Catalog id (e.g. 'awq', 'gptq', 'hqq', 'bnb_nf4').
@@ -87,3 +90,109 @@ def kill_job(job_id: str) -> str:
     except FileNotFoundError as e:
         return json.dumps({"error": str(e)})
     return json.dumps(asdict(meta), indent=2)
+
+
+@tool
+def read_job_logs(job_id: str, n_lines: int = 200) -> str:
+    """Return the tail of stdout + stderr for a failed job so the Fix agent can diagnose.
+
+    Same data as `tail_job_logs`, scoped with a larger default tail because fix
+    agents typically need more surrounding context than a status check.
+    """
+    try:
+        logs = executor.tail(job_id, n_lines=n_lines)
+    except FileNotFoundError as e:
+        return json.dumps({"error": str(e)})
+    return json.dumps(
+        {"stdout": logs.get("stdout.log", ""), "stderr": logs.get("stderr.log", "")},
+        indent=2,
+    )
+
+
+@tool
+def edit_script(job_id: str, old: str, new: str) -> str:
+    """Apply a single str.replace edit to the failed job's saved script (jobs/<id>/script.py).
+
+    `old` must appear exactly once in the file. After the edit, the new content is
+    validated with ast.parse; syntax errors roll back the change. Returns JSON with
+    status + the number of bytes written on success.
+    """
+    script = executor.JOBS_ROOT / job_id / "script.py"
+    if not script.exists():
+        return json.dumps({"status": "error", "error": f"no such script: {script}"})
+
+    text = script.read_text()
+    count = text.count(old)
+    if count == 0:
+        return json.dumps(
+            {"status": "error", "error": "old string not found in script.py"}
+        )
+    if count > 1:
+        return json.dumps(
+            {
+                "status": "error",
+                "error": f"old string matches {count} times; make it unique",
+            }
+        )
+
+    new_text = text.replace(old, new, 1)
+    try:
+        ast.parse(new_text)
+    except SyntaxError as e:
+        return json.dumps(
+            {
+                "status": "error",
+                "error": f"edit produced syntax error: {e.msg} at line {e.lineno}",
+            }
+        )
+    script.write_text(new_text)
+    return json.dumps(
+        {"status": "ok", "path": str(script), "bytes": len(new_text)}, indent=2
+    )
+
+
+@tool
+def relaunch_job(job_id: str) -> str:
+    """Re-launch a failed job's (possibly edited) script under the same method venv.
+
+    Reads jobs/<job_id>/script.py and the parent job's meta.json (for method_id,
+    model_id, output_dir), then spawns a new background job whose meta.parent_job_id
+    points at the failed job. Returns the new job_id — call this LAST; it terminates
+    the Fix agent loop.
+    """
+    try:
+        parent = executor.refresh_status(job_id)
+    except FileNotFoundError as e:
+        return json.dumps({"status": "error", "error": str(e)})
+
+    script_path = Path(parent.script_path)
+    if not script_path.exists():
+        script_path = executor.JOBS_ROOT / job_id / "script.py"
+    if not script_path.exists():
+        return json.dumps(
+            {"status": "error", "error": f"script not found for job {job_id}"}
+        )
+
+    script_code = script_path.read_text()
+    try:
+        meta = executor.launch(
+            method_id=parent.method_id,
+            model_id=parent.model_id,
+            script_code=script_code,
+            output_dir=parent.output_dir,
+            parent_job_id=job_id,
+            attempt=parent.attempt + 1,
+        )
+    except (ValueError, RuntimeError) as e:
+        return json.dumps({"status": "error", "error": str(e)})
+
+    return json.dumps(
+        {
+            "status": "ok",
+            "new_job_id": meta.job_id,
+            "parent_job_id": job_id,
+            "pid": meta.pid,
+            "attempt": meta.attempt,
+        },
+        indent=2,
+    )

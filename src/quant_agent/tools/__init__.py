@@ -10,6 +10,16 @@ from .executor_tools import (
     list_jobs,
     tail_job_logs,
     kill_job,
+    read_job_logs,
+    edit_script,
+    relaunch_job,
+)
+from .repo_tool import (
+    clone_method_repo,
+    install_method_venv,
+    run_in_venv,
+    list_repo_dir,
+    read_repo_file,
 )
 from .script_io import ValidationSession, make_write_script_tool, validate
 
@@ -28,7 +38,15 @@ __all__ = [
     "list_jobs",
     "tail_job_logs",
     "kill_job",
+    "read_job_logs",
+    "edit_script",
+    "relaunch_job",
     "ValidationSession",
     "make_write_script_tool",
     "validate",
+    "clone_method_repo",
+    "install_method_venv",
+    "run_in_venv",
+    "list_repo_dir",
+    "read_repo_file",
 ]

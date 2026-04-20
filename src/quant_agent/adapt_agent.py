@@ -138,8 +138,17 @@ def _read_output_file(path: Path) -> str:
     return text
 
 
-def run(model_id: str, method: MethodCandidate) -> tuple[str, str]:
-    """Run the Adapt ReAct loop. Returns (script_path, script_code)."""
+def run(
+    model_id: str,
+    method: MethodCandidate,
+    previous_error: Exception | str | None = None,
+) -> tuple[str, str]:
+    """Run the Adapt ReAct loop. Returns (script_path, script_code).
+
+    ``previous_error`` is set by the orchestrator on retry attempts so the agent
+    sees its prior failure and can diagnose (e.g. pick a different install step
+    or entry file) instead of repeating the same tool sequence.
+    """
     s = load_settings()
 
     out_dir = s.output_dir
@@ -179,16 +188,19 @@ def run(model_id: str, method: MethodCandidate) -> tuple[str, str]:
     )
     agent = create_react_agent(llm, tools, prompt=prompt)
 
+    user_msg = (
+        f"Port {model_id} to {method.name} ({method.bits}-bit). "
+        f"Clone the repo, build the venv, write the script to {script_path}."
+    )
+    if previous_error is not None:
+        user_msg += (
+            f"\n\nThis is a RETRY. The previous attempt failed with: {previous_error}. "
+            "Diagnose the root cause and change your approach — do not repeat the "
+            "same tool sequence."
+        )
+
     agent.invoke(
-        {
-            "messages": [
-                (
-                    "user",
-                    f"Port {model_id} to {method.name} ({method.bits}-bit). "
-                    f"Clone the repo, build the venv, write the script to {script_path}.",
-                )
-            ]
-        },
+        {"messages": [("user", user_msg)]},
         config={"recursion_limit": 60},
     )
 

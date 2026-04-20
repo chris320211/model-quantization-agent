@@ -166,7 +166,44 @@ def _format_supervise_trail(chain: list[JobMeta]) -> str:
     return "\n".join(lines)
 
 
-def run(user_input: str, dry: bool = False, max_repairs: int = 3) -> str:
+def _run_adapt_with_retry(
+    model_id: str,
+    method: MethodCandidate,
+    max_adapt_retries: int,
+) -> tuple[str, str]:
+    """Invoke adapt_agent up to ``max_adapt_retries`` times on the same method.
+
+    On each retry the previous error is fed back into the agent's user message so
+    it can adjust (different install_steps, different entry point). Raises the
+    final exception if every attempt fails.
+    """
+    last_err: Exception | None = None
+    total = max(1, max_adapt_retries)
+    for attempt in range(1, total + 1):
+        if attempt > 1:
+            typer.echo(
+                f"\n[adapt-retry] attempt {attempt}/{total} on {method.id} "
+                f"(previous error: {last_err})",
+                err=True,
+            )
+        try:
+            return adapt_agent.run(
+                model_id=model_id,
+                method=method,
+                previous_error=last_err,
+            )
+        except Exception as e:  # noqa: BLE001 — any adapt failure retries
+            last_err = e
+    assert last_err is not None
+    raise last_err
+
+
+def run(
+    user_input: str,
+    dry: bool = False,
+    max_repairs: int = 3,
+    max_adapt_retries: int = 2,
+) -> str:
     report = research_agent.run(user_input)
     typer.echo(format_report(report), err=True)
 
@@ -174,9 +211,10 @@ def run(user_input: str, dry: bool = False, max_repairs: int = 3) -> str:
     if idx is None:
         return "aborted"
 
-    # Try the user's pick first, then fall back through the remaining candidates
-    # in report order if Adapt fails (clone/install/write errors). User chose
-    # auto-fallback over abort or re-prompt.
+    # Try the user's pick first, retrying same-method adapt failures
+    # (``max_adapt_retries`` attempts). If every attempt on that method fails,
+    # fall back to the remaining candidates in report order. User chose
+    # auto-fallback across methods over abort or re-prompt.
     order = [idx - 1] + [i for i in range(len(report.methods)) if i != idx - 1]
 
     last_error: Exception | None = None
@@ -184,16 +222,17 @@ def run(user_input: str, dry: bool = False, max_repairs: int = 3) -> str:
         chosen = report.methods[i]
         if pos > 0:
             typer.echo(
-                f"\n[fallback] Previous candidate failed: {last_error}. "
-                f"Trying next candidate: {chosen.name} ({chosen.id}).",
+                f"\n[fallback] Candidate {report.methods[order[pos-1]].id} exhausted "
+                f"retries ({last_error}). Trying next candidate: {chosen.name} ({chosen.id}).",
                 err=True,
             )
         try:
-            script_path, script_code = adapt_agent.run(
+            script_path, script_code = _run_adapt_with_retry(
                 model_id=report.resolved_model_id,
                 method=chosen,
+                max_adapt_retries=max_adapt_retries,
             )
-        except Exception as e:  # noqa: BLE001 — any adapt failure triggers fallback
+        except Exception as e:  # noqa: BLE001 — same-method retries exhausted
             last_error = e
             continue
 

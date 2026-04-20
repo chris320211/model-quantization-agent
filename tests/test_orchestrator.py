@@ -28,6 +28,20 @@ def _make_meta(job_id: str, status: str, exit_code: int | None = None, attempt: 
 
 
 def _fixture_report() -> ResearchReport:
+    from quant_agent.tools.recommender import load_catalog
+
+    include_ids = {"awq", "gptq", "bnb_nf4"}
+    considered = []
+    for m in load_catalog():
+        mid = m["id"]
+        if mid in include_ids:
+            considered.append(
+                ConsideredMethod(id=mid, verdict="include", reason="Llama supported; sm_86 OK.")
+            )
+        else:
+            considered.append(
+                ConsideredMethod(id=mid, verdict="reject", reason="skipped for fixture simplicity.")
+            )
     return ResearchReport(
         resolved_model_id="meta-llama/Llama-2-7b-hf",
         params_b=6.74,
@@ -35,12 +49,7 @@ def _fixture_report() -> ResearchReport:
         vram_gb=24.0,
         compute_capability=8.6,
         gpu_arch="Ampere",
-        considered=[
-            ConsideredMethod(id="awq", verdict="include", reason="Llama supported; sm_86 OK."),
-            ConsideredMethod(id="gptq", verdict="include", reason="Llama supported; widely adopted."),
-            ConsideredMethod(id="bnb_nf4", verdict="include", reason="Calibration-free; fits 24GB."),
-            ConsideredMethod(id="fp8", verdict="reject", reason="FP8 needs Hopper sm_90; A10G is sm_86."),
-        ],
+        considered=considered,
         methods=[
             MethodCandidate(
                 id="awq",
@@ -106,7 +115,7 @@ def test_run_invokes_adapt_and_execute_with_second_choice(monkeypatch):
         seen["input"] = user_input
         return report
 
-    def fake_adapt_run(model_id, method):
+    def fake_adapt_run(model_id, method, previous_error=None):
         seen["adapt_model_id"] = model_id
         seen["adapt_method"] = method
         return ("/tmp/out/quantize_x_gptq.py", "import gptqmodel\n")
@@ -147,7 +156,7 @@ def test_run_dry_skips_execute(monkeypatch):
     monkeypatch.setattr(
         orchestrator.adapt_agent,
         "run",
-        lambda model_id, method: ("/tmp/out/script.py", "code"),
+        lambda model_id, method, previous_error=None: ("/tmp/out/script.py", "code"),
     )
 
     exec_invoke = MagicMock()
@@ -276,6 +285,75 @@ def test_supervise_skips_retry_on_killed(monkeypatch):
     assert len(chain) == 1
 
 
+def test_adapt_retry_succeeds_on_second_attempt(monkeypatch):
+    report = _fixture_report()
+
+    calls = {"n": 0, "seen_errors": []}
+
+    def flaky_adapt(model_id, method, previous_error=None):
+        calls["n"] += 1
+        calls["seen_errors"].append(previous_error)
+        if calls["n"] == 1:
+            raise RuntimeError("install_method_venv failed")
+        return ("/tmp/out/script.py", "code")
+
+    monkeypatch.setattr(orchestrator.sys, "stdin", io.StringIO("1\n"))
+    monkeypatch.setattr(orchestrator.research_agent, "run", lambda _: report)
+    monkeypatch.setattr(orchestrator.adapt_agent, "run", flaky_adapt)
+
+    monkeypatch.setattr(
+        orchestrator,
+        "execute_quantization",
+        SimpleNamespace(
+            invoke=MagicMock(return_value=json.dumps({"job_id": "JOB1", "pid": 1, "status": "running"}))
+        ),
+    )
+    monkeypatch.setattr(
+        orchestrator.executor, "wait_for_job", lambda jid: _make_meta(jid, "completed", 0)
+    )
+
+    result = orchestrator.run("whatever", max_adapt_retries=2)
+
+    assert calls["n"] == 2
+    assert calls["seen_errors"][0] is None
+    assert isinstance(calls["seen_errors"][1], RuntimeError)
+    assert "Job launched: JOB1" in result
+
+
+def test_adapt_retry_exhausted_falls_back_to_next_candidate(monkeypatch):
+    report = _fixture_report()
+
+    per_method_calls: dict[str, int] = {}
+
+    def always_fails_on_first_method(model_id, method, previous_error=None):
+        per_method_calls[method.id] = per_method_calls.get(method.id, 0) + 1
+        if method.id == report.methods[0].id:
+            raise RuntimeError(f"{method.id} broken")
+        return ("/tmp/out/script.py", "code")
+
+    monkeypatch.setattr(orchestrator.sys, "stdin", io.StringIO("1\n"))
+    monkeypatch.setattr(orchestrator.research_agent, "run", lambda _: report)
+    monkeypatch.setattr(orchestrator.adapt_agent, "run", always_fails_on_first_method)
+
+    monkeypatch.setattr(
+        orchestrator,
+        "execute_quantization",
+        SimpleNamespace(
+            invoke=MagicMock(return_value=json.dumps({"job_id": "JOB2", "pid": 1, "status": "running"}))
+        ),
+    )
+    monkeypatch.setattr(
+        orchestrator.executor, "wait_for_job", lambda jid: _make_meta(jid, "completed", 0)
+    )
+
+    result = orchestrator.run("whatever", max_adapt_retries=2)
+
+    # First method got 2 adapt attempts, then fell through to the second method.
+    assert per_method_calls[report.methods[0].id] == 2
+    assert per_method_calls[report.methods[1].id] == 1
+    assert "Job launched: JOB2" in result
+
+
 def test_run_with_max_repairs_zero_skips_supervise(monkeypatch):
     report = _fixture_report()
 
@@ -284,7 +362,7 @@ def test_run_with_max_repairs_zero_skips_supervise(monkeypatch):
     monkeypatch.setattr(
         orchestrator.adapt_agent,
         "run",
-        lambda model_id, method: ("/tmp/out/script.py", "code"),
+        lambda model_id, method, previous_error=None: ("/tmp/out/script.py", "code"),
     )
 
     execute_payload = json.dumps({"job_id": "JOB1", "pid": 1, "status": "running"})

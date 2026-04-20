@@ -16,6 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from langchain_anthropic import ChatAnthropic
+from pydantic import ValidationError
 
 from .config import load_settings
 from .schemas import ResearchReport
@@ -227,7 +228,20 @@ def run(user_input: str) -> ResearchReport:
 
     s = load_settings()
     llm = ChatAnthropic(model=s.model, api_key=s.anthropic_api_key, temperature=0)
-    report: ResearchReport = llm.with_structured_output(ResearchReport).invoke(prompt)
+    structured = llm.with_structured_output(ResearchReport)
+
+    try:
+        report: ResearchReport = structured.invoke(prompt)
+    except ValidationError as first_err:
+        retry_prompt = (
+            prompt
+            + "\n\nYour previous response failed schema validation:\n"
+            + str(first_err)
+            + "\n\nRe-emit the ResearchReport. Every catalog id above must appear "
+            "exactly once in `considered` with a verdict; every id in `methods` "
+            "must have a matching 'include' verdict."
+        )
+        report = structured.invoke(retry_prompt)
 
     return report.model_copy(
         update={

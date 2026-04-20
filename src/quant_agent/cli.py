@@ -50,9 +50,21 @@ def ask_cmd(
         "--max-repairs",
         help="Runtime-failure repair attempts on the chosen method (0 disables).",
     ),
+    max_adapt_retries: int = typer.Option(
+        2,
+        "--max-adapt-retries",
+        help="Same-method adapt-time retries before falling back to the next candidate.",
+    ),
 ) -> None:
     """Research → pick → Adapt → execute (unless --dry)."""
-    typer.echo(orchestrator_module.run(request, dry=dry, max_repairs=max_repairs))
+    typer.echo(
+        orchestrator_module.run(
+            request,
+            dry=dry,
+            max_repairs=max_repairs,
+            max_adapt_retries=max_adapt_retries,
+        )
+    )
 
 
 @app.command("adapt")

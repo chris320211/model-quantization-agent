@@ -24,8 +24,7 @@ def _stub_venv(tmp_path, monkeypatch):
     fake_py = tmp_path / "fake_python"
     fake_py.write_text("#!/bin/sh\nexit 0\n")
     fake_py.chmod(0o755)
-    monkeypatch.setattr(script_io, "venv_python", lambda venv: fake_py)
-    monkeypatch.setattr(script_io, "METHOD_TO_VENV", {"awq": "awq"})
+    monkeypatch.setattr(script_io, "venv_python", lambda method_id: fake_py)
 
 
 def test_parse_error_returns_false(tmp_path, monkeypatch):
@@ -53,21 +52,15 @@ def test_successful_validation(tmp_path, monkeypatch):
     assert stage == "ok"
 
 
-def test_unknown_method_venv(tmp_path, monkeypatch):
-    _stub_venv(tmp_path, monkeypatch)
-    ok, stage, msg = script_io.validate("import os\n", "unknown_method")
-    assert ok is False
-    assert stage == "dry-import"
-    assert "No venv mapping" in msg
-
-
-def test_missing_venv_python(tmp_path, monkeypatch):
-    monkeypatch.setattr(script_io, "venv_python", lambda venv: tmp_path / "does_not_exist")
-    monkeypatch.setattr(script_io, "METHOD_TO_VENV", {"awq": "awq"})
+def test_missing_venv_skips_dry_import(tmp_path, monkeypatch):
+    # When the method venv hasn't been built, validate() trusts ast.parse and
+    # skips dry-import instead of failing — the Adapt agent may be writing a
+    # stdlib-only wrapper, and install_method_venv may not have run yet.
+    monkeypatch.setattr(script_io, "venv_python", lambda method_id: tmp_path / "does_not_exist")
     ok, stage, msg = script_io.validate("import os\n", "awq")
-    assert ok is False
-    assert stage == "dry-import"
-    assert "Venv python not found" in msg
+    assert ok is True
+    assert stage == "ok"
+    assert "skipped" in msg
 
 
 def test_session_writes_on_success(tmp_path, monkeypatch):

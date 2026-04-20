@@ -19,7 +19,7 @@ from pathlib import Path
 
 from langchain_core.tools import tool
 
-from ..executor import METHOD_TO_VENV, venv_python
+from ..executor import venv_python
 
 _MAX_ATTEMPTS = 3
 _DRY_IMPORT_TIMEOUT = 30
@@ -50,17 +50,12 @@ def validate(code: str, method_id: str) -> tuple[bool, str, str]:
     except SyntaxError as e:
         return False, "parse", f"{e.msg} at line {e.lineno}"
 
-    if method_id not in METHOD_TO_VENV:
-        return False, "dry-import", f"No venv mapping for method '{method_id}'"
-    venv = METHOD_TO_VENV[method_id]
-    if venv is None:
-        # Method has no pip-installable package (clone-and-run repo). Trust ast.parse.
-        return True, "ok", "dry-import skipped (no venv configured for this method)"
-    py = venv_python(venv)
+    py = venv_python(method_id)
     if not py.exists():
-        return False, "dry-import", (
-            f"Venv python not found at {py}. Run scripts/bootstrap_ec2.sh {venv} first."
-        )
+        # Venv not built yet — trust ast.parse. The Adapt agent is expected to
+        # build the venv via install_method_venv before the script runs; if it
+        # didn't, launch() will surface the error.
+        return True, "ok", "dry-import skipped (venv not yet built for this method)"
 
     modules = _collect_top_level_modules(tree)
     if not modules:

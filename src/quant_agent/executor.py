@@ -19,6 +19,7 @@ import os
 import secrets
 import signal
 import subprocess
+import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,18 +29,9 @@ from .config import REPO_ROOT, load_settings
 JOBS_ROOT = REPO_ROOT / "jobs"
 VENV_ROOT = REPO_ROOT / ".venvs"
 
-# Map catalog method_id -> venv directory name (matches scripts/bootstrap_ec2.sh).
-# A value of None means the method has no pip-installable package; dry-import validation
-# is skipped (ast.parse only) and end-to-end launch is unsupported (the generated script
-# must be run manually from inside the method's cloned repo).
-METHOD_TO_VENV: dict[str, str | None] = {
-    "awq": "awq",
-    "gptq": "gptq",
-    "hqq": "hqq",
-    "bnb_nf4": "bnb",
-    "bnb_llm_int8": "bnb",
-    "flatquant": None,
-}
+# Venvs resolve by convention: .venvs/<method_id>/bin/python. Method venvs are
+# built on-demand by the Adapt agent via tools.repo_tool.install_method_venv,
+# which also clones the method's repo into .venvs/<method_id>/repo/.
 
 
 @dataclass
@@ -55,6 +47,8 @@ class JobMeta:
     finished_at: str | None = None
     exit_code: int | None = None
     status: str = "running"  # running | completed | failed | killed
+    parent_job_id: str | None = None
+    attempt: int = 1
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), indent=2)
@@ -75,23 +69,25 @@ def _pid_alive(pid: int) -> bool:
         return True  # process exists, just not ours
 
 
-def venv_python(venv_name: str) -> Path:
-    """Path to the python binary inside a method-specific venv."""
-    return VENV_ROOT / venv_name / "bin" / "python"
+def venv_python(method_id: str) -> Path:
+    """Path to the python binary inside a method-specific venv (.venvs/<method_id>/bin/python)."""
+    return VENV_ROOT / method_id / "bin" / "python"
 
 
-def launch(method_id: str, model_id: str, script_code: str, output_dir: str) -> JobMeta:
+def launch(
+    method_id: str,
+    model_id: str,
+    script_code: str,
+    output_dir: str,
+    parent_job_id: str | None = None,
+    attempt: int = 1,
+) -> JobMeta:
     """Spawn the quantization script in its method venv, detached from the agent."""
-    venv = METHOD_TO_VENV.get(method_id)
-    if venv is None:
-        raise ValueError(
-            f"No venv mapping for method '{method_id}'. Run scripts/bootstrap_ec2.sh first "
-            f"or add '{method_id}' to METHOD_TO_VENV."
-        )
-    py = venv_python(venv)
+    py = venv_python(method_id)
     if not py.exists():
         raise RuntimeError(
-            f"Venv python not found at {py}. Run scripts/bootstrap_ec2.sh {venv} first."
+            f"Venv python not found at {py}. The Adapt agent should have built it via "
+            f"install_method_venv before reaching this point."
         )
 
     job_id = _new_job_id()
@@ -124,11 +120,13 @@ def launch(method_id: str, model_id: str, script_code: str, output_dir: str) -> 
         job_id=job_id,
         method_id=method_id,
         model_id=model_id,
-        venv=venv,
+        venv=method_id,
         script_path=str(script_path),
         output_dir=output_dir,
         pid=proc.pid,
         started_at=datetime.now(timezone.utc).isoformat(),
+        parent_job_id=parent_job_id,
+        attempt=attempt,
     )
     (job_dir / "meta.json").write_text(meta.to_json())
     return meta
@@ -168,6 +166,15 @@ def refresh_status(job_id: str) -> JobMeta:
         meta.finished_at = datetime.now(timezone.utc).isoformat()
         _write_meta(meta)
     return meta
+
+
+def wait_for_job(job_id: str, poll_interval: float = 2.0) -> JobMeta:
+    """Block until a job leaves the 'running' state. Returns the final meta."""
+    while True:
+        meta = refresh_status(job_id)
+        if meta.status != "running":
+            return meta
+        time.sleep(poll_interval)
 
 
 def tail(job_id: str, n_lines: int = 80) -> dict[str, str]:

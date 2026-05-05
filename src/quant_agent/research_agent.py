@@ -19,6 +19,7 @@ from langchain_anthropic import ChatAnthropic
 from pydantic import ValidationError
 
 from .config import load_settings
+from .hardware_probe import probe_live
 from .schemas import ResearchReport
 from .tools import hf_model_info, rag_search
 from .tools.aws_instance import UnknownInstanceType, lookup as instance_lookup
@@ -77,6 +78,7 @@ def _catalog_context() -> str:
                 "quality_score": m.get("quality", 0),
                 "speed_score": m.get("speedup", 0),
                 "notes": m.get("notes", ""),
+                "hyperparameters_default": m.get("hyperparameters_default"),
             }
         )
     return json.dumps(rows, indent=2)
@@ -135,11 +137,20 @@ Resolved inputs (authoritative — copy verbatim into the report):
 - vram_gb: {vram_gb}
 - compute_capability: {compute_capability}
 - gpu_arch: {gpu_arch}
+- memory_bandwidth_gb_s: {memory_bandwidth_gb_s}
+- peak_fp16_tflops: {peak_fp16_tflops}
+- int8_tops: {int8_tops}
+
+Hardware profile (live nvidia-smi merged with static specs; probe_ok=false means no GPU
+was visible at planning time and the live fields are null — treat with appropriate caveat):
+{hw_profile}
 
 HuggingFace model info (pay attention to `architectures`):
 {hf_info}
 
-Catalog (seed/methods.yaml, authoritative — ids, repo_urls, scores MUST come from here):
+Catalog (seed/methods.yaml, authoritative — ids, repo_urls, scores MUST come from here.
+The `hyperparameters_default` field, when present, lists tunable knobs and their valid
+values; use it to set the candidate's `hyperparameters` to a sensible starting config):
 {catalog}
 
 Retrieved literature per method (one RAG query per catalog id, grouped by id):
@@ -154,8 +165,9 @@ Task — do these steps in order.
    - reason: one line. Cite the specific axis that drove the decision: architecture
      compatibility (hf_info architectures vs retrieved chunks), GPU/compute-capability
      fit (e.g. FP8 needs Hopper sm_90, Marlin kernels need Ampere sm_80+), VRAM math
-     (params_b * bits / 8 * 1.4 <= vram_gb), or calibration/QAT fit. Ground in the
-     retrieved chunks — do not hallucinate support chunks do not corroborate.
+     (params_b * bits / 8 * 1.4 <= vram_gb), bandwidth/TOPS bottleneck reasoning where
+     relevant, or calibration/QAT fit. Ground in the retrieved chunks — do not
+     hallucinate support chunks do not corroborate.
    You MUST produce exactly one `considered` entry per catalog id. No duplicates, no omissions.
 
 2. Finalists. From the "include" verdicts, pick 3-8 and emit them as `methods`:
@@ -164,12 +176,17 @@ Task — do these steps in order.
    - quality_score and speed_score MUST be copied verbatim from the catalog.
    - bits: pick one supported bit width that fits the VRAM budget.
    - est_vram_gb: params_b * bits / 8 * 1.4 (weight footprint + ~40% headroom).
+   - hyperparameters: when the catalog entry has a `hyperparameters_default` block,
+     emit a flat dict of {{name: default_value}} as your initial recommendation
+     (e.g. {{"group_size": 128, "sym": true}}). When no defaults are listed, omit
+     this field — the tune loop will infer ranges later from the method's README.
    - summary: 2-3 sentences on when this method is the right fit and what it costs.
      Cite retrieved chunks where useful.
 
 3. Tradeoffs. One paragraph comparing the finalists across the axes that matter for
    THIS model and GPU: quality vs speed, calibration cost, bit-width options, activation
-   vs weight-only, kernel maturity. No ranking.
+   vs weight-only, kernel maturity, and how bandwidth vs compute headroom on this GPU
+   shapes which methods are likely to be Pareto-optimal. No ranking.
 """
 
 
@@ -195,6 +212,10 @@ def run(user_input: str) -> ResearchReport:
     compute_capability: float | None = None
     gpu: str | None = None
     gpu_arch: str | None = None
+    memory_bandwidth_gb_s: float | None = None
+    peak_fp16_tflops: float | None = None
+    int8_tops: float | None = None
+    spec = None
     if parsed.instance_phrase:
         try:
             spec = instance_lookup(parsed.instance_phrase)
@@ -203,8 +224,13 @@ def run(user_input: str) -> ResearchReport:
             compute_capability = spec.compute_capability
             gpu = spec.gpu
             gpu_arch = spec.gpu_arch
+            memory_bandwidth_gb_s = spec.memory_bandwidth_gb_s
+            peak_fp16_tflops = spec.peak_fp16_tflops
+            int8_tops = spec.int8_tops
         except UnknownInstanceType:
             instance_type = parsed.instance_phrase
+
+    hw_profile = probe_live(spec)
 
     info = _hf_info(model_id)
     params_b = info.get("params_b")
@@ -221,6 +247,10 @@ def run(user_input: str) -> ResearchReport:
         vram_gb=vram_gb,
         compute_capability=compute_capability,
         gpu_arch=gpu_arch,
+        memory_bandwidth_gb_s=memory_bandwidth_gb_s,
+        peak_fp16_tflops=peak_fp16_tflops,
+        int8_tops=int8_tops,
+        hw_profile=json.dumps(hw_profile.to_dict(), indent=2),
         hf_info=json.dumps(info, indent=2),
         catalog=_catalog_context(),
         rag=_format_rag_bundle(per_method),
@@ -251,5 +281,8 @@ def run(user_input: str) -> ResearchReport:
             "vram_gb": vram_gb,
             "compute_capability": compute_capability,
             "gpu_arch": gpu_arch,
+            "memory_bandwidth_gb_s": memory_bandwidth_gb_s,
+            "peak_fp16_tflops": peak_fp16_tflops,
+            "int8_tops": int8_tops,
         }
     )

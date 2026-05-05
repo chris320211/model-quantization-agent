@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -15,6 +15,12 @@ class MethodCandidate(BaseModel):
     speed_score: int = Field(..., ge=0, le=5, description="Kernel-level speedup 0-5.")
     needs_calibration: bool
     summary: str = Field(..., description="2-3 sentence why/when for this method.")
+    hyperparameters: dict[str, Any] | None = Field(
+        None,
+        description="Method-specific hyperparameter values "
+        "(e.g. {'group_size': 128, 'sym': true}). Populated by the tune loop or "
+        "by the research agent when ranges are known. None means use method defaults.",
+    )
 
 
 class ConsideredMethod(BaseModel):
@@ -35,6 +41,9 @@ class ResolvedInputs(BaseModel):
     vram_gb: float | None = None
     compute_capability: float | None = None
     gpu_arch: str | None = None
+    memory_bandwidth_gb_s: float | None = None
+    peak_fp16_tflops: float | None = None
+    int8_tops: float | None = None
 
 
 class ResearchReport(ResolvedInputs):

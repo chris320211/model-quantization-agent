@@ -115,7 +115,7 @@ def test_run_invokes_adapt_and_execute_with_second_choice(monkeypatch):
         seen["input"] = user_input
         return report
 
-    def fake_adapt_run(model_id, method, previous_error=None):
+    def fake_adapt_run(model_id, method, previous_error=None, **kw):
         seen["adapt_model_id"] = model_id
         seen["adapt_method"] = method
         return ("/tmp/out/quantize_x_gptq.py", "import gptqmodel\n")
@@ -156,7 +156,7 @@ def test_run_dry_skips_execute(monkeypatch):
     monkeypatch.setattr(
         orchestrator.adapt_agent,
         "run",
-        lambda model_id, method, previous_error=None: ("/tmp/out/script.py", "code"),
+        lambda model_id, method, previous_error=None, **kw: ("/tmp/out/script.py", "code"),
     )
 
     exec_invoke = MagicMock()
@@ -290,7 +290,7 @@ def test_adapt_retry_succeeds_on_second_attempt(monkeypatch):
 
     calls = {"n": 0, "seen_errors": []}
 
-    def flaky_adapt(model_id, method, previous_error=None):
+    def flaky_adapt(model_id, method, previous_error=None, **kw):
         calls["n"] += 1
         calls["seen_errors"].append(previous_error)
         if calls["n"] == 1:
@@ -325,7 +325,7 @@ def test_adapt_retry_exhausted_falls_back_to_next_candidate(monkeypatch):
 
     per_method_calls: dict[str, int] = {}
 
-    def always_fails_on_first_method(model_id, method, previous_error=None):
+    def always_fails_on_first_method(model_id, method, previous_error=None, **kw):
         per_method_calls[method.id] = per_method_calls.get(method.id, 0) + 1
         if method.id == report.methods[0].id:
             raise RuntimeError(f"{method.id} broken")
@@ -362,7 +362,7 @@ def test_run_with_max_repairs_zero_skips_supervise(monkeypatch):
     monkeypatch.setattr(
         orchestrator.adapt_agent,
         "run",
-        lambda model_id, method, previous_error=None: ("/tmp/out/script.py", "code"),
+        lambda model_id, method, previous_error=None, **kw: ("/tmp/out/script.py", "code"),
     )
 
     execute_payload = json.dumps({"job_id": "JOB1", "pid": 1, "status": "running"})

@@ -50,6 +50,9 @@ class JobMeta:
     status: str = "running"  # running | completed | failed | killed
     parent_job_id: str | None = None
     attempt: int = 1
+    tune_iter: int = 0
+    hyperparameters: dict | None = None
+    metrics: dict | None = None
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), indent=2)

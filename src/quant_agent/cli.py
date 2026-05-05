@@ -55,14 +55,38 @@ def ask_cmd(
         "--max-adapt-retries",
         help="Same-method adapt-time retries before falling back to the next candidate.",
     ),
+    tune: bool = typer.Option(
+        False,
+        "--tune",
+        help="After baseline succeeds, prompt to enter the closed-loop hyperparameter tuner.",
+    ),
+    auto_tune: bool = typer.Option(
+        False,
+        "--auto-tune",
+        help="Imply --tune and skip the 'Tune further?' prompt (non-interactive).",
+    ),
+    max_tune_iter: int = typer.Option(
+        5,
+        "--max-tune-iter",
+        help="Hard cap on tune iterations (including the baseline).",
+    ),
+    stagnate_after: int = typer.Option(
+        2,
+        "--stagnate-after",
+        help="Stop tuning after this many consecutive non-improvements.",
+    ),
 ) -> None:
-    """Research → pick → Adapt → execute (unless --dry)."""
+    """Research → pick → Adapt → execute → (optional) closed-loop tuner."""
     typer.echo(
         orchestrator_module.run(
             request,
             dry=dry,
             max_repairs=max_repairs,
             max_adapt_retries=max_adapt_retries,
+            tune=tune,
+            auto_tune=auto_tune,
+            max_tune_iter=max_tune_iter,
+            stagnate_after=stagnate_after,
         )
     )
 

@@ -19,6 +19,9 @@ class InstanceSpec:
     gpu: str
     compute_capability: float | None = None
     gpu_arch: str | None = None
+    memory_bandwidth_gb_s: float | None = None
+    peak_fp16_tflops: float | None = None
+    int8_tops: float | None = None
 
 
 class UnknownInstanceType(KeyError):
@@ -54,6 +57,11 @@ def lookup(instance_type: str) -> InstanceSpec:
     gpu = str(entry["gpu"])
     gpu_spec = _load_gpu_specs().get(gpu, {})
     cc = gpu_spec.get("compute_capability")
+
+    def _opt_float(name: str) -> float | None:
+        v = gpu_spec.get(name)
+        return float(v) if v is not None else None
+
     return InstanceSpec(
         instance_type=key,
         vram_gb=float(entry["vram_gb"]),
@@ -61,6 +69,9 @@ def lookup(instance_type: str) -> InstanceSpec:
         gpu=gpu,
         compute_capability=float(cc) if cc is not None else None,
         gpu_arch=gpu_spec.get("gpu_arch"),
+        memory_bandwidth_gb_s=_opt_float("memory_bandwidth_gb_s"),
+        peak_fp16_tflops=_opt_float("peak_fp16_tflops"),
+        int8_tops=_opt_float("int8_tops"),
     )
 
 

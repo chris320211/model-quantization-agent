@@ -12,9 +12,14 @@ ReAct loop that:
 
 Returns (script_path, script_code) — the orchestrator hands the code off to the
 executor, which launches it with .venvs/<method_id>/bin/python.
+
+When the tune loop calls back in with a non-empty ``hyperparameters`` dict, those
+values are baked into the prompt as a TUNE-LOCKED block. The script must reflect
+them, and downstream fix_agent invocations must not silently alter them.
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 from pathlib import Path
@@ -50,6 +55,12 @@ Chosen method:
   name:      {method_name}
   repo_url:  {repo_url}
   bits:      {bits}
+
+Hyperparameters (TUNE-LOCKED — must appear verbatim in the generated script as the
+configured values for this method's quantizer; do not substitute defaults). When this
+block reads "(none — use method defaults)", omit explicit hyperparameter args and let
+the method's own defaults apply.
+{hyperparameters_block}
 
 Target model: {model_id}
 Output script path: {script_path}
@@ -120,10 +131,20 @@ Workflow — follow in order:
          tokenizer call (or login()) and into the child env for wrapper style.
        - Print a final line with the quantized model's on-disk size so success is
          visible in stdout.
+       - Begin the script with a header comment block:
+            # TUNE-LOCKED HYPERPARAMETERS (do not modify in fix_agent):
+            # <one line per name=value from the hyperparameters block above>
+         When no hyperparameters are supplied, omit the block.
 
 Stop as soon as write_script returns status="ok". Do not call run_in_venv on the
 wrapper itself — the executor will launch it.
 """
+
+
+def _format_hyperparameters_block(hyperparameters: dict | None) -> str:
+    if not hyperparameters:
+        return "(none — use method defaults)"
+    return json.dumps(hyperparameters, indent=2, sort_keys=True)
 
 
 def _safe_slug(s: str) -> str:
@@ -142,18 +163,31 @@ def run(
     model_id: str,
     method: MethodCandidate,
     previous_error: Exception | str | None = None,
+    *,
+    hyperparameters: dict | None = None,
+    script_suffix: str | None = None,
 ) -> tuple[str, str]:
     """Run the Adapt ReAct loop. Returns (script_path, script_code).
 
     ``previous_error`` is set by the orchestrator on retry attempts so the agent
     sees its prior failure and can diagnose (e.g. pick a different install step
     or entry file) instead of repeating the same tool sequence.
+
+    ``hyperparameters`` is the (possibly tune-locked) flat name->value dict the
+    generated script must use. None or empty means use the method's defaults.
+
+    ``script_suffix`` lets the orchestrator land successive tune iterations at
+    distinct paths (e.g. ``_iter2``) so prior iterations' scripts aren't overwritten.
     """
     s = load_settings()
 
+    if hyperparameters is None:
+        hyperparameters = method.hyperparameters
+
     out_dir = s.output_dir
     out_dir.mkdir(parents=True, exist_ok=True)
-    script_path = out_dir / f"quantize_{_safe_slug(model_id)}_{method.id}.py"
+    suffix = f"_{script_suffix}" if script_suffix else ""
+    script_path = out_dir / f"quantize_{_safe_slug(model_id)}_{method.id}{suffix}.py"
 
     session = ValidationSession(method_id=method.id)
     write_script = make_write_script_tool(session)
@@ -183,6 +217,7 @@ def run(
         method_name=method.name,
         repo_url=method.repo_url,
         bits=method.bits,
+        hyperparameters_block=_format_hyperparameters_block(hyperparameters),
         model_id=model_id,
         script_path=str(script_path),
     )

@@ -7,7 +7,7 @@ description: Recommend and generate a HuggingFace model quantization script for 
 
 This skill replicates the `model-quantization-agent` Python package's Research and Adapt phases without calling the Anthropic API directly. You (Claude Code) do the work the LangChain agents would have done, using the bundled catalog files in `reference/` plus your built-in `Read`, `Write`, `Edit`, `Bash`, and `WebFetch` tools.
 
-The skill stops after writing a validated script. It does not build venvs, does not run the script, does not supervise jobs, and does not have a Fix loop.
+The skill stops after writing a validated script. It does not build venvs, does not run the script, does not supervise jobs, and does not have a Fix loop. Hand off to the sibling `quant-execute` skill to bootstrap + run, and then optionally to `quant-tune` to close the loop with hyperparameter iteration.
 
 ## When to invoke
 
@@ -59,6 +59,15 @@ For **every** id in `methods.yaml`, emit one verdict line under a `## Considered
 - `verdict: include` if the method plausibly supports this model's architecture **and** runs on this GPU (compute capability, kernel availability, supported bit widths) **and** fits VRAM at a supported bit width.
 - `verdict: reject` otherwise.
 - `reason:` one line citing the specific axis: architecture compatibility (`hf_info.architectures` vs the method's typical targets), GPU/compute-capability fit (e.g. FP8 needs Hopper sm_90, Marlin kernels need Ampere sm_80+), VRAM math (`params_b * bits / 8 * 1.4 <= vram_gb`), or calibration/QAT fit.
+
+**Bit-width hardware rule.** NVIDIA GPUs only have native datatype support for INT8, INT4, FP8 (Hopper/Ada only), and FP16/BF16. There is no hardware path for 1-, 2-, or 3-bit; those rely on packed-weight software dequant kernels that are typically tuned for sm_80 (A100) and have poor or no validated path on consumer Ampere (sm_86 — A10G) and below.
+
+- On `compute_capability < 9.0` (anything pre-Hopper): **reject any candidate whose chosen bit width is < 4.** This means 2-bit and 3-bit picks are off the table on A10G, A100, L4, L40S, V100, T4, M60, K80.
+- A method that lists both sub-4-bit and 4-bit options (e.g. AQLM `[2,3,4]`, VPTQ `[1,2,3,4]`, SpQR `[3,4]`) can still **include** — but pin its `bits` to the smallest **>= 4** option from the catalog.
+- A method whose only options are sub-4-bit (e.g. BitNet `[2]`) **rejects** on these GPUs.
+- On Hopper (sm_90) or newer: the rule relaxes — sub-4-bit is allowed if the method has documented Hopper kernels.
+
+**KV-cache-only methods.** Methods whose only entry in `quantizes` is `kv_cache` (e.g. `kivi`, `kvquant`, `zipcache`) do **not** reduce weight memory — they shrink the KV cache during long-context generation. For a "port `<model>` to `<instance>`" request, the user is asking to fit the **weights** on the GPU, so KV-cache-only methods are out of scope. **Reject** them with `reason: kv-cache-only; doesn't reduce weight memory`. Exception: if the user phrases the request around long context ("run 1M context Llama-3 on..."), include them — but no current alias phrasing implies that, so default to reject.
 
 You **must** produce exactly one `considered` entry per catalog id. No duplicates, no omissions. Render it as a collapsible section so the table below stays the focus:
 
@@ -121,9 +130,24 @@ You are now writing a Python script that quantizes `<model_id>` using `<chosen.n
 
 4. **Find the example entry point.** `Bash: ls /tmp/quant-<chosen.id>/repo/examples`, then `ls .../scripts`, then `ls .../` if needed. `Read` 1-2 most-likely entry files to see their API. **Do not run `--help`** (no venv built); read the argparse/click block in the source instead to discover the real flag names.
 
+   **Pure pip-package case (no examples/scripts dir):** Some methods are published as clean Python packages with no example scripts in the repo (e.g. `auto-round`, `autoawq`, `bitsandbytes`). If `examples/`, `scripts/`, and the repo root all lack a runnable entry point, fall back to:
+   - `Read <pkg>/__init__.py` to confirm what the package exports (the public class names).
+   - `grep -rn "^class <ClassName>\b" <pkg>/` to find the class definition.
+   - `Read` the class `__init__` and the primary `quantize*` / `save*` method to confirm signatures.
+   - Then commit to **Style A** (no Style B fallback for this case — there's no script to wrap).
+
 5. **Decide the script style and write it** with the `Write` tool to `out/quantize_<safe_model>_<chosen.id>.py`:
 
-   **STYLE A — Standalone import** (preferred when the method has a stable Python API: autoawq, gptqmodel, hqq, bitsandbytes, or any importable module in the cloned repo). One Python file that imports the library and runs quantization in-process. Must load `<model_id>` from HF and save output to `./quantized/<chosen.id>-<safe_model>/`.
+   **STYLE A — Standalone import** (preferred when the method has a stable Python API: autoawq, gptqmodel, hqq, bitsandbytes, auto-round, or any importable module in the cloned repo). One Python file that imports the library and runs quantization in-process. Must load `<model_id>` from HF and save output to `./quantized/<chosen.id>-<safe_model>/`.
+
+   **Watch the pip-name vs import-name mismatch.** PyPI distribution names sometimes use hyphens while the Python module uses underscores. The install step takes the PyPI name; the `import` statement takes the module name. Known pairs in this catalog:
+   - `pip install auto-round` → `from auto_round import AutoRound`
+   - `pip install autoawq` → `from awq import AutoAWQForCausalLM` (note: not `from autoawq`)
+   - `pip install gptqmodel` → `from gptqmodel import GPTQModel`
+   - `pip install hqq` → `from hqq.core.quantize import BaseQuantizeConfig`
+   - `pip install bitsandbytes` → `import bitsandbytes` (matches)
+
+   When in doubt, `Read <repo>/<pkg>/__init__.py` after cloning to confirm the import path before writing the script.
 
    **STYLE B — Wrapper subprocess** (preferred for research repos whose usage is `python examples/foo.py --model ...`). Python file that:
    - imports `sys, os, subprocess, pathlib`
@@ -138,7 +162,17 @@ You are now writing a Python script that quantizes `<model_id>` using `<chosen.n
    - Handle HF gated models: read `HF_TOKEN` from env and pass to every loader / tokenizer call (or `huggingface_hub.login()`), and into the child env for wrapper style.
    - Print a final line with the quantized model's on-disk size so success is visible in stdout.
 
-6. **Prepend a header comment block** to the script with the install steps the user must run first:
+6. **Prepend a TUNE-LOCKED block** above the install header IF the chosen candidate has a `hyperparameters` dict (set by Research from the catalog's `hyperparameters_default`). One line per `name=value`. The `quant-tune` skill reads this block to know which knobs are tunable and as a safety check that the fix loop didn't silently mutate them.
+
+   ```python
+   # TUNE-LOCKED HYPERPARAMETERS (do not modify in fix loop):
+   # group_size=128
+   # zero_point=True
+   ```
+
+   When the candidate has no hyperparameters (the catalog row has no `hyperparameters_default` block), omit the TUNE-LOCKED section entirely.
+
+7. **Prepend a header comment block** to the script with the install steps the user must run first:
 
    ```python
    # Generated by the `quant` Claude Code skill.
@@ -177,6 +211,10 @@ Print, in order:
 2. The chosen method (`<chosen.id>` / `<chosen.name>`, `<chosen.bits>`-bit).
 3. The exact install commands from the script header.
 4. The run command: `python out/quantize_<safe_model>_<chosen.id>.py`.
+5. **Credentials reminder.** If the model is gated (HuggingFace shows a license-acceptance gate, or `model_id` starts with `meta-llama/`, `mistralai/`, `google/gemma-`, etc.), tell the user:
+   - The script reads `HF_TOKEN`/`HUGGINGFACE_HUB_TOKEN` from `.env`.
+   - If they have not set one, point them at the `/quant-setup` skill (or `quant-agent setup` in a terminal for hidden input).
+   - For convenience when running outside the `quant-execute` skill, they can `source /home/ubuntu/model-quantization-agent/.claude/skills/_shared/load_env.sh` first.
 
 Do not offer to run the script — execution is intentionally out of scope.
 
@@ -188,6 +226,7 @@ Do not offer to run the script — execution is intentionally out of scope.
 - **Don't fan out RAG calls or arxiv fetches during Research.** Research is catalog-only. The `notes` field in `methods.yaml` plus your model knowledge is the grounding.
 - **Don't pick a winner during Research.** The user picks.
 - **Don't proceed if the model can't be resolved.** Ask for an exact HF id.
+- **Don't recommend sub-4-bit on pre-Hopper GPUs.** See the Bit-width hardware rule in Phase 2. NVIDIA hardware has no native 1/2/3-bit datatype; software-only dequant kernels for those bit widths target sm_80 and have poor performance on sm_86 (A10G), no validated path on Turing/Volta. If the user explicitly asks for 2-bit on A10G, push back and suggest 4-bit on a method like AWQ or AutoRound instead.
 
 ## Reference files (bundled in this skill)
 

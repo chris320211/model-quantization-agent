@@ -84,16 +84,21 @@ Mirror `executor.launch` in `src/quant_agent/executor.py`:
 
 1. Generate a `job_id`: `Bash: date -u +%Y%m%dT%H%M%SZ-$(openssl rand -hex 3)`.
 2. Create `jobs/<job_id>/` and snapshot the script: `cp <script_path> jobs/<job_id>/script.py`.
-3. Launch with `setsid` so it survives an SSH disconnect (this is the same trick `executor.py` uses):
+3. Launch with `setsid` so it survives an SSH disconnect (this is the same trick `executor.py` uses). **Source the shared env loader first** — the Python agent gets dotenv vars via `pydantic-settings`, but a bash `setsid` wrapper does not inherit them unless you load them explicitly. This is the source of most "401 gated repo" failures on cached models (Llama-2's `chat_template.jinja` and similar new-file fetches re-trigger auth even when the safetensors are cached):
 
 ```bash
 setsid bash -c '
+  source /home/ubuntu/model-quantization-agent/.claude/skills/_shared/load_env.sh || exit 1
   .venvs/<method_id>/bin/python jobs/<job_id>/script.py \
     > jobs/<job_id>/stdout.log 2> jobs/<job_id>/stderr.log
   echo $? > jobs/<job_id>/exit_code
 ' &
 echo $! > jobs/<job_id>/pid
 ```
+
+The loader (`_shared/load_env.sh`) refuses to source a `.env` whose mode is not `600` (auto-tightens), exports every key, and aliases `HUGGINGFACE_HUB_TOKEN` ↔ `HF_TOKEN` so the generated script sees whichever name it expects. Echoes only key NAMES to stderr — never values — so `jobs/<job_id>/stderr.log` stays clean.
+
+If the loader returns non-zero (no `.env`, or `HF_TOKEN`/`HUGGINGFACE_HUB_TOKEN` missing for a gated model), **don't launch yet** — direct the user to the `/quant-setup` skill (or `quant-agent setup` in a real terminal for hidden input). This is a launch-time precondition, not a runtime fix.
 
 Run this with `Bash run_in_background: true` so Claude Code returns immediately. Capture the PID.
 
@@ -159,9 +164,9 @@ Run `Read jobs/<job_id>/script.py` before any `Edit` call so you know the exact 
 | `requires X but found Y` (version conflict) | `Bash: .venvs/<method_id>/bin/pip install <pkg>==<X>` |
 | `No module named '<method>_inference_engine'` or other CUDA-extension miss | `Bash: cd .venvs/<method_id>/repo/<subdir> && TORCH_CUDA_ARCH_LIST=<compute_capability> ../../bin/python setup.py install` — set `TORCH_CUDA_ARCH_LIST` to the GPU's compute capability (look it up from `../quant/reference/gpu_specs.yaml` if needed) |
 | `argparse: unrecognized arguments` / wrong flag | `Edit jobs/<job_id>/script.py` — replace the offending flag string with the real one (read the cloned example file at `.venvs/<method_id>/repo/...` to find it) |
-| HF `401`/`403` on a gated model | **Non-retryable.** Tell the user to set `HF_TOKEN` and re-invoke. **Do not relaunch.** |
+| HF `401`/`403` on a gated model | **Non-retryable.** Direct the user to the `/quant-setup` skill (or `quant-agent setup` in a terminal for hidden input). **Do not relaunch.** |
 | `OutOfMemoryError` / `CUDA out of memory` | **Non-retryable** at the same bit width. Tell the user to (a) pick a smaller model, (b) increase bits in the script (lower-bit usually means *less* memory, so check whether a higher-bit option in `methods.yaml` actually fits worse — usually not), or (c) move to a larger instance. **Do not relaunch.** |
-| Missing `HF_TOKEN` (`401` with `gated_repo`) | **Non-retryable.** Tell the user to `export HF_TOKEN=...` and re-invoke. |
+| Missing `HF_TOKEN` (`401` with `gated_repo`) | **Non-retryable.** Direct the user to the `/quant-setup` skill — never paste the token into the shell or the generated script. |
 | `No space left on device` | **Non-retryable.** Tell the user to free EBS or remount with more space. |
 | Anything else not above | Inspect the cloned repo (`Read .venvs/<method_id>/repo/<file>`) or the upstream README (`WebFetch`) before guessing. If you still can't classify, mark non-retryable and stop. |
 
@@ -200,6 +205,8 @@ When `exit_code` is `0`:
 
 That's the end of the skill. No upload, no inference test — those are out of scope.
 
+If the user originally asked to tune (e.g. "quantize and tune", "find the best config"), hand off to the `quant-tune` skill with the successful `job_id`. Otherwise stop and let the user invoke `quant-tune` explicitly.
+
 ## Guardrails
 
 - **Don't switch methods.** The user already picked. If the chosen method genuinely can't run on the hardware (OOM, missing compute capability), say so and stop — don't silently swap to another method.
@@ -209,7 +216,7 @@ That's the end of the skill. No upload, no inference test — those are out of s
 - **Don't run on a non-CUDA host.** The skill's preconditions block this; don't try to fall back to CPU.
 - **Keep `jobs/<id>/` intact.** It's the contract with `quant-agent jobs list/status/logs/kill` from the Python CLI, so users can poke at jobs from a separate shell.
 
-## Cross-skill contract with `quant`
+## Cross-skill contract with `quant`, `quant-setup`, and `quant-tune`
 
 Inputs this skill expects from `quant`:
 
@@ -218,3 +225,13 @@ Inputs this skill expects from `quant`:
 - A `Method:` line, a `Model:` line, and a `Target:` line in the header.
 
 If any of those are absent (e.g. the user wrote the script by hand), ask for the missing pieces rather than guessing.
+
+Inputs this skill expects from `quant-setup`:
+
+- `/home/ubuntu/model-quantization-agent/.env` exists with mode `600`, containing at minimum `HUGGINGFACE_HUB_TOKEN` (for any gated model). The shared loader at `_shared/load_env.sh` reads this file and is sourced inside the `setsid` block in Phase 3. If the loader returns non-zero, bail and direct the user to `/quant-setup`.
+
+Outputs `quant-tune` consumes from this skill:
+
+- `jobs/<job_id>/` with `meta.json` `status: "completed"` and `output_dir` populated.
+- `.venvs/<method_id>/bin/python` from Phase 2.
+- The TUNE-LOCKED header block in `jobs/<job_id>/script.py` (if `quant` produced it). The fix loop must NOT mutate that block — it lists the hyperparameters the tune loop owns. If you find yourself wanting to change `group_size` or `n_calib_samples` during a fix attempt, that's a tune decision, not a fix decision; stop and tell the user.

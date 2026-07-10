@@ -19,7 +19,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from .config import REPO_ROOT
+from .config import REPO_ROOT, child_env
 from .measurement import run_measurement
 from .pareto import Metrics
 from .tools.torch_spec import detect_torch_spec
@@ -55,6 +55,7 @@ def _ensure_venv() -> Path:
     create = subprocess.run(
         ["python3", "-m", "venv", str(vd)],
         capture_output=True, text=True, timeout=120,
+        env=child_env(include_hf=False),
     )
     if create.returncode != 0:
         raise RuntimeError(
@@ -73,6 +74,7 @@ def _ensure_venv() -> Path:
         r = subprocess.run(
             ["bash", "-lc", cmd],
             capture_output=True, text=True, timeout=900,
+            env=child_env(include_hf=False),
         )
         if r.returncode != 0:
             raise RuntimeError(

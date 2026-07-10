@@ -30,7 +30,7 @@ class ConsideredMethod(BaseModel):
     reason: str = Field(
         ...,
         description="One line citing architecture, GPU/compute-capability, VRAM, "
-        "or bit-width fit — grounded in the retrieved literature.",
+        "or bit-width fit — grounded in the catalog fields + hf_info.",
     )
 
 
@@ -60,7 +60,7 @@ class ResearchReport(ResolvedInputs):
     )
     tradeoffs: str = Field(
         ...,
-        description="One paragraph comparing the finalists, grounded in retrieved chunks.",
+        description="One paragraph comparing the finalists, grounded in the catalog + model/GPU facts.",
     )
 
     @model_validator(mode="after")

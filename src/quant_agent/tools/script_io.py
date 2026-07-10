@@ -19,10 +19,28 @@ from pathlib import Path
 
 from langchain_core.tools import tool
 
+from ..config import REPO_ROOT, child_env
 from ..executor import venv_python
 
 _MAX_ATTEMPTS = 3
 _DRY_IMPORT_TIMEOUT = 30
+_DEFAULT_OUTPUT_ROOT = REPO_ROOT / "out"
+
+
+def _contained(root: Path, path: str) -> Path | None:
+    """Resolve ``path`` and return it only if it stays under ``root``; else None.
+
+    Guards write_script against an LLM-supplied absolute path or '../' escape that
+    would land a generated script outside the output directory.
+    """
+    base = root.resolve()
+    try:
+        candidate = Path(path).resolve()
+    except (OSError, RuntimeError):
+        return None
+    if candidate == base or base in candidate.parents:
+        return candidate
+    return None
 
 
 def _collect_top_level_modules(tree: ast.Module) -> list[str]:
@@ -68,6 +86,9 @@ def validate(code: str, method_id: str) -> tuple[bool, str, str]:
             capture_output=True,
             text=True,
             timeout=_DRY_IMPORT_TIMEOUT,
+            # Importing a module runs its top-level code; give the probe a minimal
+            # env so a package can't exfiltrate cloud secrets on import.
+            env=child_env(include_hf=False),
         )
     except subprocess.TimeoutExpired:
         return False, "dry-import", f"timed out after {_DRY_IMPORT_TIMEOUT}s"
@@ -80,14 +101,29 @@ def validate(code: str, method_id: str) -> tuple[bool, str, str]:
 class ValidationSession:
     """Per-run retry counter for the Adapt agent's write_script tool."""
 
-    def __init__(self, method_id: str, max_attempts: int = _MAX_ATTEMPTS) -> None:
+    def __init__(
+        self,
+        method_id: str,
+        max_attempts: int = _MAX_ATTEMPTS,
+        allowed_root: Path | None = None,
+    ) -> None:
         self.method_id = method_id
         self.attempts_left = max_attempts
+        # Generated scripts may only be written under this directory.
+        self.allowed_root = (allowed_root or _DEFAULT_OUTPUT_ROOT)
 
     def write(self, path: str, code: str) -> dict:
+        out = _contained(self.allowed_root, path)
+        if out is None:
+            return {
+                "status": "error",
+                "stage": "path",
+                "message": f"refusing to write outside {self.allowed_root}: {path!r}",
+                "attempts_left": self.attempts_left,
+            }
+
         ok, stage, msg = validate(code, self.method_id)
         if ok:
-            out = Path(path)
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(code)
             return {
@@ -108,7 +144,6 @@ class ValidationSession:
             }
 
         # Exhausted: still write so the user can inspect, with a warning header.
-        out = Path(path)
         out.parent.mkdir(parents=True, exist_ok=True)
         header = f"# WARNING: failed validation at stage={stage}: {msg}\n"
         out.write_text(header + code)

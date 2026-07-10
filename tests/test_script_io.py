@@ -65,7 +65,7 @@ def test_missing_venv_skips_dry_import(tmp_path, monkeypatch):
 
 def test_session_writes_on_success(tmp_path, monkeypatch):
     _stub_venv(tmp_path, monkeypatch)
-    sess = script_io.ValidationSession(method_id="awq")
+    sess = script_io.ValidationSession(method_id="awq", allowed_root=tmp_path)
     out = tmp_path / "sub" / "script.py"
     with patch.object(subprocess, "run", _fake_run_ok):
         result = sess.write(str(out), "import os\n")
@@ -76,7 +76,7 @@ def test_session_writes_on_success(tmp_path, monkeypatch):
 
 def test_session_retry_on_error(tmp_path, monkeypatch):
     _stub_venv(tmp_path, monkeypatch)
-    sess = script_io.ValidationSession(method_id="awq", max_attempts=3)
+    sess = script_io.ValidationSession(method_id="awq", max_attempts=3, allowed_root=tmp_path)
     out = tmp_path / "script.py"
     with patch.object(subprocess, "run", _fake_run_import_err):
         r1 = sess.write(str(out), "import autowaq\n")
@@ -88,7 +88,7 @@ def test_session_retry_on_error(tmp_path, monkeypatch):
 
 def test_session_exhaustion_writes_with_warning(tmp_path, monkeypatch):
     _stub_venv(tmp_path, monkeypatch)
-    sess = script_io.ValidationSession(method_id="awq", max_attempts=1)
+    sess = script_io.ValidationSession(method_id="awq", max_attempts=1, allowed_root=tmp_path)
     out = tmp_path / "script.py"
     with patch.object(subprocess, "run", _fake_run_import_err):
         r = sess.write(str(out), "import autowaq\n")
@@ -100,7 +100,7 @@ def test_session_exhaustion_writes_with_warning(tmp_path, monkeypatch):
 
 def test_make_write_script_tool_returns_json(tmp_path, monkeypatch):
     _stub_venv(tmp_path, monkeypatch)
-    sess = script_io.ValidationSession(method_id="awq")
+    sess = script_io.ValidationSession(method_id="awq", allowed_root=tmp_path)
     tool_fn = script_io.make_write_script_tool(sess)
     with patch.object(subprocess, "run", _fake_run_ok):
         raw = tool_fn.invoke({"path": str(tmp_path / "s.py"), "code": "import os\n"})

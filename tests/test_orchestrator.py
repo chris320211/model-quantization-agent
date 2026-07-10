@@ -228,6 +228,73 @@ def test_supervise_retries_until_success(monkeypatch):
     assert fix_calls[0]["attempt"] == 1
 
 
+def test_supervise_feeds_repair_history_to_fix_agent(monkeypatch):
+    """Attempt N's fix_agent call must see what attempts 1..N-1 tried (fix_note) and how they ended."""
+    report = _fixture_report()
+    chosen = report.methods[0]
+
+    metas = {
+        "JOB1": _make_meta("JOB1", "failed", exit_code=1, attempt=1),
+        "JOB2": _make_meta("JOB2", "failed", exit_code=1, attempt=2, parent="JOB1"),
+        "JOB3": _make_meta("JOB3", "completed", exit_code=0, attempt=3, parent="JOB2"),
+    }
+    metas["JOB2"].fix_note = "pinned transformers==4.46.3"
+
+    monkeypatch.setattr(orchestrator.executor, "wait_for_job", lambda jid: metas[jid])
+
+    fix_calls: list[dict] = []
+
+    def fake_fix(**kwargs):
+        fix_calls.append(kwargs)
+        return f"JOB{len(fix_calls) + 1}"
+
+    monkeypatch.setattr(orchestrator.fix_agent, "run", fake_fix)
+
+    final, chain = orchestrator._supervise("JOB1", chosen, "m", max_repairs=3)
+
+    assert final.status == "completed"
+    # First repair attempt: no history yet.
+    assert fix_calls[0]["prior_attempts"] == []
+    assert fix_calls[0]["same_error"] is False
+    # Second repair attempt sees the first relaunch's fix and its failed outcome.
+    history = fix_calls[1]["prior_attempts"]
+    assert len(history) == 1
+    assert history[0]["job_id"] == "JOB2"
+    assert history[0]["fix"] == "pinned transformers==4.46.3"
+    assert history[0]["status"] == "failed"
+    assert history[0]["exit_code"] == 1
+
+
+def test_supervise_flags_same_error(monkeypatch):
+    """When the relaunched job dies with the identical root error, same_error=True is passed."""
+    report = _fixture_report()
+    chosen = report.methods[0]
+
+    metas = {
+        "JOB1": _make_meta("JOB1", "failed", exit_code=1, attempt=1),
+        "JOB2": _make_meta("JOB2", "failed", exit_code=1, attempt=2, parent="JOB1"),
+    }
+    monkeypatch.setattr(orchestrator.executor, "wait_for_job", lambda jid: metas[jid])
+    monkeypatch.setattr(
+        orchestrator.executor,
+        "error_signature",
+        lambda jid: "ModuleNotFoundError: No module named 'awq'",
+    )
+
+    fix_calls: list[dict] = []
+
+    def fake_fix(**kwargs):
+        fix_calls.append(kwargs)
+        return "JOB2" if len(fix_calls) == 1 else None
+
+    monkeypatch.setattr(orchestrator.fix_agent, "run", fake_fix)
+
+    orchestrator._supervise("JOB1", chosen, "m", max_repairs=3)
+
+    assert fix_calls[0]["same_error"] is False  # single job, nothing to compare
+    assert fix_calls[1]["same_error"] is True
+
+
 def test_supervise_gives_up_after_max_repairs(monkeypatch):
     report = _fixture_report()
     chosen = report.methods[0]

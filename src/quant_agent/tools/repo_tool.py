@@ -13,21 +13,55 @@ Layout per method:
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
 
 from langchain_core.tools import tool
 
-from ..config import REPO_ROOT
+from ..config import REPO_ROOT, child_env
 from .torch_spec import detect_torch_spec
+
+log = logging.getLogger(__name__)
 
 VENV_ROOT = REPO_ROOT / ".venvs"
 _INSTALL_TIMEOUT = 900
 _RUN_TIMEOUT_DEFAULT = 120
 _OUTPUT_TAIL_LINES = 60
 _READ_MAX_BYTES = 20_000
+
+# A GitHub repo URL and nothing else — no shell metacharacters, no query string.
+_GITHUB_URL_RE = re.compile(r"^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/?$")
+
+
+def _catalog_repo_urls(method_id: str) -> set[str] | None:
+    """Return the set of catalog-declared repo URLs for a method id, or None if the
+    id isn't in the catalog. Trailing slashes normalized off."""
+    from .recommender import load_catalog  # local import avoids a tools import cycle
+
+    for m in load_catalog():
+        if m.get("id") == method_id:
+            return {u.rstrip("/") for u in (m.get("repos") or [])}
+    return None
+
+
+def _safe_join(root: Path, rel: str) -> Path | None:
+    """Join ``rel`` under ``root`` and confirm the result stays inside ``root``.
+
+    Returns the resolved path, or None if ``rel`` escapes ``root`` (e.g. '../../.env',
+    an absolute path, or a symlink target outside the tree).
+    """
+    base = root.resolve()
+    try:
+        candidate = (base / rel).resolve()
+    except (OSError, RuntimeError):
+        return None
+    if candidate == base or base in candidate.parents:
+        return candidate
+    return None
 
 
 def _baseline_packages() -> list[str]:
@@ -60,9 +94,9 @@ def _tail(text: str, n: int = _OUTPUT_TAIL_LINES) -> str:
 
 
 def _run(cmd: str, cwd: Path | None, timeout: int, env_extra: dict | None = None) -> dict:
-    env = os.environ.copy()
-    if env_extra:
-        env.update(env_extra)
+    # Allowlisted env only — a cloned repo's install steps / setup.py must never see
+    # the parent's cloud secrets (see config.child_env). env_extra (e.g. HF token) merges last.
+    env = child_env(env_extra)
     try:
         r = subprocess.run(
             ["bash", "-lc", cmd],
@@ -94,6 +128,26 @@ def clone_method_repo(method_id: str, repo_url: str) -> str:
     Idempotent: if the repo is already cloned, returns its path without re-cloning.
     Returns JSON: {status, path, already_present?, error?}.
     """
+    # Validate the URL shape before it reaches any subprocess — an LLM (whose context
+    # includes untrusted README/RAG text) supplies repo_url.
+    if not _GITHUB_URL_RE.match(repo_url.strip()):
+        return json.dumps(
+            {"status": "error", "error": f"repo_url is not a plain GitHub repo URL: {repo_url!r}"}
+        )
+    # Pin to the catalog: the URL must be one this method actually declares in
+    # seed/methods.yaml, so a hijacked candidate can't point us at an arbitrary repo.
+    known = _catalog_repo_urls(method_id)
+    if known is None:
+        return json.dumps({"status": "error", "error": f"unknown method_id: {method_id!r}"})
+    if repo_url.strip().rstrip("/") not in known:
+        return json.dumps(
+            {
+                "status": "error",
+                "error": f"repo_url {repo_url!r} is not a catalog repo for {method_id!r}. "
+                f"Known: {sorted(known)}",
+            }
+        )
+
     venv_dir = _venv_dir(method_id)
     repo = _repo_dir(method_id)
     venv_dir.mkdir(parents=True, exist_ok=True)
@@ -104,10 +158,20 @@ def clone_method_repo(method_id: str, repo_url: str) -> str:
     if repo.exists():
         shutil.rmtree(repo)
 
-    result = _run(f"git clone --depth 1 {repo_url} {repo}", cwd=None, timeout=300)
-    if not result["ok"]:
+    # argv form (no shell) so the URL can never be interpreted as a command.
+    try:
+        r = subprocess.run(
+            ["git", "clone", "--depth", "1", repo_url.strip(), str(repo)],
+            capture_output=True,
+            text=True,
+            timeout=300,
+            env=child_env(include_hf=False),
+        )
+    except subprocess.TimeoutExpired:
+        return json.dumps({"status": "error", "error": "git clone timed out after 300s"})
+    if r.returncode != 0:
         return json.dumps(
-            {"status": "error", "error": result["stderr"] or result["stdout"]}, indent=2
+            {"status": "error", "error": _tail(r.stderr or r.stdout or "clone failed")}, indent=2
         )
     return json.dumps({"status": "ok", "path": str(repo), "already_present": False}, indent=2)
 
@@ -138,6 +202,8 @@ def install_method_venv(method_id: str, install_steps: list[str]) -> str:
     activate = f"source {venv_dir}/bin/activate"
     results: list[dict] = []
     for step in _baseline_packages() + list(install_steps):
+        # Audit trail — install_steps are LLM-chosen and run in a shell by design.
+        log.info("install_method_venv[%s] step: %s", method_id, step)
         cmd = f"{activate} && {step}"
         r = _run(cmd, cwd=repo, timeout=_INSTALL_TIMEOUT)
         results.append({"step": step, **r})
@@ -164,7 +230,12 @@ def run_in_venv(method_id: str, command: str, cwd_in_repo: str | None = None, ti
         return json.dumps(
             {"status": "error", "error": f"venv missing: {venv_dir}. Call install_method_venv first."}
         )
-    cwd = repo / cwd_in_repo if cwd_in_repo else repo
+    if cwd_in_repo:
+        cwd = _safe_join(repo, cwd_in_repo)
+        if cwd is None:
+            return json.dumps({"status": "error", "error": f"cwd_in_repo escapes repo: {cwd_in_repo!r}"})
+    else:
+        cwd = repo
     if not cwd.exists():
         return json.dumps({"status": "error", "error": f"cwd not found: {cwd}"})
 
@@ -185,7 +256,9 @@ def list_repo_dir(method_id: str, path: str = "") -> str:
     root = _repo_dir(method_id)
     if not root.exists():
         return json.dumps({"status": "error", "error": f"repo not cloned: {root}"})
-    target = root / path
+    target = _safe_join(root, path)
+    if target is None:
+        return json.dumps({"status": "error", "error": f"path escapes repo: {path!r}"})
     if not target.exists():
         return json.dumps({"status": "error", "error": f"path not found: {target}"})
     if not target.is_dir():
@@ -206,7 +279,9 @@ def read_repo_file(method_id: str, path: str, max_bytes: int = _READ_MAX_BYTES) 
     root = _repo_dir(method_id)
     if not root.exists():
         return json.dumps({"status": "error", "error": f"repo not cloned: {root}"})
-    target = root / path
+    target = _safe_join(root, path)
+    if target is None:
+        return json.dumps({"status": "error", "error": f"path escapes repo: {path!r}"})
     if not target.exists() or not target.is_file():
         return json.dumps({"status": "error", "error": f"file not found: {target}"})
     data = target.read_bytes()

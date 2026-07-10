@@ -1,8 +1,7 @@
-"""Research agent: per-method RAG survey + structured verdict walk.
+"""Research agent: structured verdict walk over the catalog.
 
-For each catalog method, fan out a rag_search query that injects the user's model
-architecture and GPU context. The LLM then walks every catalog id, emits include/reject
-with a one-line reason grounded in the retrieved chunks, and picks 3-8 finalists.
+Walks every catalog method, emits include/reject with a one-line reason grounded in
+the structured catalog cards + the resolved model/GPU facts, and picks 3-8 finalists.
 
 Not a ReAct loop. Single `.with_structured_output(ResearchReport)` call. The LLM does
 NOT pick a winner — the user picks.
@@ -12,7 +11,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from langchain_anthropic import ChatAnthropic
@@ -21,7 +19,7 @@ from pydantic import ValidationError
 from .config import load_settings
 from .hardware_probe import probe_live
 from .schemas import ResearchReport
-from .tools import hf_model_info, rag_search
+from .tools import hf_model_info
 from .tools.aws_instance import UnknownInstanceType, lookup as instance_lookup
 from .tools.model_alias import resolve as resolve_model
 from .tools.recommender import load_catalog
@@ -31,9 +29,6 @@ log = logging.getLogger(__name__)
 _INSTANCE_RE = re.compile(
     r"\b([a-z]\d+[a-z\d\-]*\.(?:\d*x?large|metal))\b", re.IGNORECASE
 )
-
-_PER_METHOD_RAG_K = 3
-_RAG_FANOUT_WORKERS = 8
 
 
 @dataclass
@@ -84,48 +79,6 @@ def _catalog_context() -> str:
     return json.dumps(rows, indent=2)
 
 
-def _build_query(
-    name: str, arch: str | None, gpu: str | None, gpu_arch: str | None
-) -> str:
-    parts = [name]
-    if arch:
-        parts.append(arch)
-    if gpu:
-        parts.append(gpu)
-    if gpu_arch:
-        parts.append(gpu_arch)
-    parts.append("support compatibility kernel")
-    return " ".join(parts)
-
-
-def _fan_out_rag(
-    catalog: list[dict],
-    architecture: str | None,
-    gpu: str | None,
-    gpu_arch: str | None,
-) -> dict[str, str]:
-    """Parallel rag_search, one query per catalog method. Returns {method_id: chunks_text}."""
-    def _one(method: dict) -> tuple[str, str]:
-        mid = method["id"]
-        query = _build_query(method["name"], architecture, gpu, gpu_arch)
-        try:
-            chunks = rag_search.invoke(
-                {"query": query, "k": _PER_METHOD_RAG_K, "method_id": mid}
-            )
-        except Exception as e:  # noqa: BLE001
-            chunks = f"(rag_search failed: {e})"
-        return mid, chunks
-
-    with ThreadPoolExecutor(max_workers=_RAG_FANOUT_WORKERS) as ex:
-        return dict(ex.map(_one, catalog))
-
-
-def _format_rag_bundle(per_method: dict[str, str]) -> str:
-    return "\n\n".join(
-        f"=== method_id={mid} ===\n{per_method[mid]}" for mid in sorted(per_method)
-    )
-
-
 _PROMPT = """You are the Research agent in a quantization-porting pipeline. Your job is to
 survey the user's options and produce a ResearchReport the user can choose from. You do
 NOT pick a winner — the user picks.
@@ -153,9 +106,6 @@ The `hyperparameters_default` field, when present, lists tunable knobs and their
 values; use it to set the candidate's `hyperparameters` to a sensible starting config):
 {catalog}
 
-Retrieved literature per method (one RAG query per catalog id, grouped by id):
-{rag}
-
 Task — do these steps in order.
 
 1. Per-method walk. For EVERY catalog id above, emit one `considered` entry with:
@@ -163,11 +113,12 @@ Task — do these steps in order.
      runs on this GPU (compute capability / kernel availability / bit-width support) AND
      fits VRAM at a supported bit width. Otherwise "reject".
    - reason: one line. Cite the specific axis that drove the decision: architecture
-     compatibility (hf_info architectures vs retrieved chunks), GPU/compute-capability
-     fit (e.g. FP8 needs Hopper sm_90, Marlin kernels need Ampere sm_80+), VRAM math
-     (params_b * bits / 8 * 1.4 <= vram_gb), bandwidth/TOPS bottleneck reasoning where
-     relevant, or calibration/QAT fit. Ground in the retrieved chunks — do not
-     hallucinate support chunks do not corroborate.
+     compatibility (hf_info `architectures` vs the method's catalog notes),
+     GPU/compute-capability fit (e.g. FP8 needs Hopper sm_90, Marlin kernels need Ampere
+     sm_80+), VRAM math (params_b * bits / 8 * 1.4 <= vram_gb), bandwidth/TOPS bottleneck
+     reasoning where relevant, or calibration/QAT fit. Ground in the catalog fields +
+     hf_info + your own knowledge of these methods — do not assert compatibility the
+     catalog and hf_info don't support.
    You MUST produce exactly one `considered` entry per catalog id. No duplicates, no omissions.
 
 2. Finalists. From the "include" verdicts, pick 3-8 and emit them as `methods`:
@@ -180,8 +131,8 @@ Task — do these steps in order.
      emit a flat dict of {{name: default_value}} as your initial recommendation
      (e.g. {{"group_size": 128, "sym": true}}). When no defaults are listed, omit
      this field — the tune loop will infer ranges later from the method's README.
-   - summary: 2-3 sentences on when this method is the right fit and what it costs.
-     Cite retrieved chunks where useful.
+   - summary: 2-3 sentences on when this method is the right fit and what it costs,
+     grounded in the catalog notes + the model/GPU facts.
 
 3. Tradeoffs. One paragraph comparing the finalists across the axes that matter for
    THIS model and GPU: quality vs speed, calibration cost, bit-width options, activation
@@ -210,7 +161,6 @@ def run(user_input: str) -> ResearchReport:
     instance_type: str | None = None
     vram_gb: float | None = None
     compute_capability: float | None = None
-    gpu: str | None = None
     gpu_arch: str | None = None
     memory_bandwidth_gb_s: float | None = None
     peak_fp16_tflops: float | None = None
@@ -222,7 +172,6 @@ def run(user_input: str) -> ResearchReport:
             instance_type = spec.instance_type
             vram_gb = spec.vram_gb
             compute_capability = spec.compute_capability
-            gpu = spec.gpu
             gpu_arch = spec.gpu_arch
             memory_bandwidth_gb_s = spec.memory_bandwidth_gb_s
             peak_fp16_tflops = spec.peak_fp16_tflops
@@ -234,11 +183,6 @@ def run(user_input: str) -> ResearchReport:
 
     info = _hf_info(model_id)
     params_b = info.get("params_b")
-    arches = info.get("architectures") or []
-    arch_hint = arches[0] if arches else None
-
-    catalog = load_catalog()
-    per_method = _fan_out_rag(catalog, arch_hint, gpu, gpu_arch)
 
     prompt = _PROMPT.format(
         model_id=model_id,
@@ -253,7 +197,6 @@ def run(user_input: str) -> ResearchReport:
         hw_profile=json.dumps(hw_profile.to_dict(), indent=2),
         hf_info=json.dumps(info, indent=2),
         catalog=_catalog_context(),
-        rag=_format_rag_bundle(per_method),
     )
 
     s = load_settings()

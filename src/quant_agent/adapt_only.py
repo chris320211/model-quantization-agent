@@ -5,14 +5,8 @@ pair — e.g. `flatquant` + `meta-llama/Llama-2-7b-hf`. Loads the method's
 repo_url + bit-width from seed/methods.yaml, constructs a MethodCandidate
 with placeholder scoring (Adapt doesn't read these fields), and invokes
 adapt_agent.run.
-
-Deliberately bypasses RAG by setting QUANT_AGENT_DISABLE_RAG=1 before the
-agent spins up its tools. The Adapt ReAct loop still has rag_search in its
-toolset, but the tool returns a short disabled-notice instead of hitting Chroma.
 """
 from __future__ import annotations
-
-import os
 
 import typer
 import yaml
@@ -60,11 +54,13 @@ def _build_candidate(entry: dict, bits: int | None) -> MethodCandidate:
     )
 
 
-def run(method_id: str, model_id: str, bits: int | None = None, disable_rag: bool = True) -> tuple[str, str]:
+def run(
+    method_id: str,
+    model_id: str,
+    bits: int | None = None,
+    trust_remote_code: bool = False,
+) -> tuple[str, str]:
     """Invoke the Adapt agent directly. Returns (script_path, script_code)."""
-    if disable_rag:
-        os.environ["QUANT_AGENT_DISABLE_RAG"] = "1"
-
     entry = _load_method_entry(method_id)
     candidate = _build_candidate(entry, bits)
 
@@ -73,4 +69,6 @@ def run(method_id: str, model_id: str, bits: int | None = None, disable_rag: boo
         f"repo={candidate.repo_url}, model={model_id}",
         err=True,
     )
-    return adapt_agent.run(model_id=model_id, method=candidate)
+    return adapt_agent.run(
+        model_id=model_id, method=candidate, trust_remote_code=trust_remote_code
+    )

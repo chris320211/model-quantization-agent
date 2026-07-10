@@ -36,17 +36,6 @@ def _prompt_secret(label: str, required: bool) -> str | None:
         typer.echo("  value required; try again", err=True)
 
 
-def _prompt_plain(label: str, required: bool) -> str | None:
-    suffix = "" if required else " (press Enter to skip)"
-    while True:
-        value = input(f"{label}{suffix}: ").strip()
-        if value:
-            return value
-        if not required:
-            return None
-        typer.echo("  value required; try again", err=True)
-
-
 def _validate_anthropic(key: str) -> tuple[bool, str]:
     """Issue a 1-token live call to confirm the key works. Returns (ok, message)."""
     try:
@@ -72,19 +61,6 @@ def _format_env(values: dict[str, str]) -> str:
         "",
         "# Anthropic Claude API key — required",
         f"ANTHROPIC_API_KEY={values['ANTHROPIC_API_KEY']}",
-        "",
-        "# Voyage AI — embeddings (voyage-3-lite)",
-        f"VOYAGE_API_KEY={values['VOYAGE_API_KEY']}",
-        "",
-        "# Qdrant Cloud — vector database",
-        f"QDRANT_URL={values['QDRANT_URL']}",
-        f"QDRANT_API_KEY={values['QDRANT_API_KEY']}",
-        "",
-        "# Cloudflare R2 — raw file storage (PDFs + repo zips)",
-        f"R2_ACCOUNT_ID={values['R2_ACCOUNT_ID']}",
-        f"R2_ACCESS_KEY_ID={values['R2_ACCESS_KEY_ID']}",
-        f"R2_SECRET_ACCESS_KEY={values['R2_SECRET_ACCESS_KEY']}",
-        f"R2_BUCKET_NAME={values['R2_BUCKET_NAME']}",
         "",
         "# Optional: raises GitHub API rate limits for Adapt agent's repo fetches",
     ]
@@ -137,14 +113,6 @@ def run(force: bool = False, validate: bool = True, no_optional: bool = False) -
             err=True,
         )
 
-    voyage_key = _prompt_secret("VOYAGE_API_KEY", required=True)
-    qdrant_url = _prompt_plain("QDRANT_URL", required=True)
-    qdrant_key = _prompt_secret("QDRANT_API_KEY", required=True)
-    r2_account_id = _prompt_plain("R2_ACCOUNT_ID", required=True)
-    r2_access_key_id = _prompt_secret("R2_ACCESS_KEY_ID", required=True)
-    r2_secret_access_key = _prompt_secret("R2_SECRET_ACCESS_KEY", required=True)
-    r2_bucket_name = _prompt_plain("R2_BUCKET_NAME", required=True)
-
     github_token: str | None = None
     hf_token: str | None = None
     if not no_optional:
@@ -164,13 +132,6 @@ def run(force: bool = False, validate: bool = True, no_optional: bool = False) -
     existing_model = os.environ.get("QUANT_AGENT_MODEL")
     values = {
         "ANTHROPIC_API_KEY": anthropic_key,
-        "VOYAGE_API_KEY": voyage_key,
-        "QDRANT_URL": qdrant_url,
-        "QDRANT_API_KEY": qdrant_key,
-        "R2_ACCOUNT_ID": r2_account_id,
-        "R2_ACCESS_KEY_ID": r2_access_key_id,
-        "R2_SECRET_ACCESS_KEY": r2_secret_access_key,
-        "R2_BUCKET_NAME": r2_bucket_name,
         "QUANT_AGENT_MODEL": existing_model or _DEFAULT_MODEL,
     }
     if github_token:

@@ -134,6 +134,34 @@ def _format_handoff(script_path: str, job_payload: str | None) -> str:
     return "\n".join(out)
 
 
+def _prior_attempt_records(chain: list[JobMeta]) -> list[dict]:
+    """Summarize each relaunched job in the chain as a repair-history record.
+
+    ``chain[0]`` is the original job; every later meta is a fix-agent relaunch
+    whose ``fix_note`` says what that attempt changed. The records feed the next
+    fix_agent invocation so it never re-applies a fix that already failed.
+    """
+    return [
+        {
+            "job_id": m.job_id,
+            "fix": m.fix_note,
+            "status": m.status,
+            "exit_code": m.exit_code,
+            "error_line": executor.error_signature(m.job_id),
+        }
+        for m in chain[1:]
+    ]
+
+
+def _same_error_as_parent(chain: list[JobMeta]) -> bool:
+    """True when the latest failed job's root error matches its parent's exactly."""
+    if len(chain) < 2:
+        return False
+    prev = executor.error_signature(chain[-2].job_id)
+    last = executor.error_signature(chain[-1].job_id)
+    return bool(prev) and prev == last
+
+
 def _supervise(
     initial_job_id: str,
     chosen: MethodCandidate,
@@ -145,6 +173,10 @@ def _supervise(
     Returns (final_meta, chain) where chain is the ordered list of all job metas
     involved (initial + any relaunches). ``final_meta`` is the last meta seen —
     completed, failed after exhausting repairs, killed, or non-retryable.
+
+    Each fix invocation receives the chain's repair history (what every prior
+    attempt changed, via JobMeta.fix_note, and how it ended) plus a same-error
+    flag, so retries are conditioned on past failures instead of starting blind.
     """
     meta = executor.wait_for_job(initial_job_id)
     chain: list[JobMeta] = [meta]
@@ -155,9 +187,12 @@ def _supervise(
         if meta.status != "failed":
             return meta, chain
 
+        same_error = _same_error_as_parent(chain)
         typer.echo(
             f"\n[fix] attempt {attempt}/{max_repairs}: job {meta.job_id} failed "
-            f"(exit {meta.exit_code}). Invoking fix agent...",
+            f"(exit {meta.exit_code})."
+            + (" Same root error as previous attempt." if same_error else "")
+            + " Invoking fix agent...",
             err=True,
         )
         try:
@@ -167,6 +202,8 @@ def _supervise(
                 model_id=model_id,
                 attempt=attempt,
                 max_attempts=max_repairs,
+                prior_attempts=_prior_attempt_records(chain),
+                same_error=same_error,
             )
         except Exception as e:  # noqa: BLE001 — any fix failure stops the loop
             typer.echo(f"[fix] fix agent errored: {e}", err=True)
@@ -193,6 +230,8 @@ def _format_supervise_trail(chain: list[JobMeta]) -> str:
         if m.exit_code is not None:
             status_line += f" (exit {m.exit_code})"
         lines.append(status_line)
+        if m.fix_note:
+            lines.append(f"  fix applied before this attempt: {m.fix_note}")
     final = chain[-1]
     lines.append(
         f"Final status: {final.status}"
@@ -212,6 +251,7 @@ def _run_adapt_with_retry(
     *,
     hyperparameters: dict | None = None,
     script_suffix: str | None = None,
+    output_dir: str | None = None,
 ) -> tuple[str, str]:
     """Invoke adapt_agent up to ``max_adapt_retries`` times on the same method.
 
@@ -235,6 +275,7 @@ def _run_adapt_with_retry(
                 previous_error=last_err,
                 hyperparameters=hyperparameters,
                 script_suffix=script_suffix,
+                output_dir=output_dir,
             )
         except Exception as e:  # noqa: BLE001 — any adapt failure retries
             last_err = e
@@ -354,7 +395,9 @@ def _tune_loop(
     ]
 
     # Track which iteration each metric came from so we can prune the rest later.
-    iter_metas: list[JobMeta] = [baseline_meta]
+    # Kept strictly parallel to ``history`` (a placeholder None is appended whenever an
+    # iteration fails before producing a job) so the keep-set indices never skew.
+    iter_metas: list[JobMeta | None] = [baseline_meta]
     prior_wins = tune_history.query_prior_wins(
         model_id=model_id, instance_type=instance_type, method_id=method.id
     )
@@ -391,6 +434,10 @@ def _tune_loop(
             err=True,
         )
 
+        # Per-iteration output dir so iterations don't overwrite each other on disk
+        # and pruning one can't delete the kept best (COR-2).
+        iter_output_dir = f"{executor.default_output_dir(method.id, model_id)}__iter{iteration}"
+
         # Adapt with new config; iter suffix keeps prior scripts on disk.
         try:
             script_path, script_code = _run_adapt_with_retry(
@@ -399,18 +446,21 @@ def _tune_loop(
                 max_adapt_retries=max_adapt_retries,
                 hyperparameters=next_hp,
                 script_suffix=f"iter{iteration}",
+                output_dir=iter_output_dir,
             )
         except Exception as e:  # noqa: BLE001
             typer.echo(f"[tune] iter {iteration} adapt failed: {e}", err=True)
             history.append(tune_agent.IterationRecord(
                 hyperparameters=next_hp, metrics=None, note=f"adapt failed: {e}",
             ))
+            iter_metas.append(None)  # keep parallel with history
             continue
 
         job_payload = execute_quantization.invoke({
             "method_id": method.id,
             "model_id": model_id,
             "script_code": script_code,
+            "options": {"output_dir": iter_output_dir},
         })
         try:
             job = json.loads(job_payload)
@@ -419,12 +469,14 @@ def _tune_loop(
                 hyperparameters=next_hp, metrics=None,
                 note=f"executor returned non-JSON: {job_payload[:200]}",
             ))
+            iter_metas.append(None)  # keep parallel with history
             continue
         if "error" in job or "job_id" not in job:
             history.append(tune_agent.IterationRecord(
                 hyperparameters=next_hp, metrics=None,
                 note=f"launch failed: {job.get('error', 'unknown')}",
             ))
+            iter_metas.append(None)  # keep parallel with history
             continue
 
         # Mark the JobMeta as a tune iteration before we wait, so jobs cli reflects it.
@@ -498,30 +550,32 @@ def _tune_loop(
 
 def _prune_intermediate_jobs(
     history: list[tune_agent.IterationRecord],
-    iter_metas: list[JobMeta],
+    iter_metas: list[JobMeta | None],
 ) -> None:
-    """Keep latest + Pareto-best; delete the rest. Called AFTER metrics persist."""
-    if len(iter_metas) <= 1:
+    """Keep latest + Pareto-best; delete the rest. Called AFTER metrics persist.
+
+    ``history`` and ``iter_metas`` are kept strictly parallel (index i in one maps to
+    index i in the other; failed iterations carry a None placeholder in iter_metas), so
+    the Pareto-best record's history index selects the right job to keep. None entries
+    have no job dir and are skipped.
+    """
+    real_idx = [i for i, m in enumerate(iter_metas) if m is not None]
+    if len(real_idx) <= 1:
         return
     metrics_only = [r.metrics for r in history if r.metrics is not None]
     best = best_so_far(metrics_only)
-    keep_idx: set[int] = {len(iter_metas) - 1}  # latest
+    keep_idx: set[int] = {real_idx[-1]}  # latest real iteration
 
     if best is not None:
         for i, r in enumerate(history):
-            if r.metrics is best:
-                # Map history index → iter_metas index. They run in lockstep
-                # because we append to both per iteration (history may carry an
-                # extra leading "baseline" record but iter_metas[0] is that
-                # baseline too, so the indices align).
-                if i < len(iter_metas):
-                    keep_idx.add(i)
+            if r.metrics is best and i < len(iter_metas) and iter_metas[i] is not None:
+                keep_idx.add(i)
                 break
 
-    for i, m in enumerate(iter_metas):
+    for i in real_idx:
         if i in keep_idx:
             continue
-        _prune_iteration(m)
+        _prune_iteration(iter_metas[i])
 
 
 def _finalize_loop(

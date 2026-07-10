@@ -1,10 +1,10 @@
 .env
 .env.local
-data/chroma/
 out/
 jobs/
 quantized/
 .venvs/
+.cache/
 __pycache__/
 *.py[cod]
 *.egg-info/

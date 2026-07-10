@@ -24,6 +24,7 @@ import subprocess
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from .config import child_env
 from .pareto import Metrics
 
 log = logging.getLogger(__name__)
@@ -60,6 +61,8 @@ Env vars:
   MEASURE_DATASET      dataset name (default: wikitext-2-raw-v1)
   MEASURE_MAX_LENGTH   sliding window length for ppl (default: 2048)
   MEASURE_STRIDE       sliding window stride for ppl (default: 512)
+  MEASURE_TRUST_REMOTE_CODE  "1" to allow executing a model repo's custom code
+                             (default: off — only enable for models you trust)
 """
 from __future__ import annotations
 
@@ -144,10 +147,14 @@ def main() -> int:
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA GPU required for measurement")
 
+    # Off by default: loading a hub model with trust_remote_code=True executes that
+    # repo's arbitrary Python. Opt in per-run via MEASURE_TRUST_REMOTE_CODE=1.
+    trust = os.environ.get("MEASURE_TRUST_REMOTE_CODE") == "1"
+
     torch.cuda.reset_peak_memory_stats()
-    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=trust)
     model = AutoModelForCausalLM.from_pretrained(
-        model_path, trust_remote_code=True, device_map="cuda", torch_dtype="auto",
+        model_path, trust_remote_code=trust, device_map="cuda", torch_dtype="auto",
     )
     model.eval()
 
@@ -219,11 +226,17 @@ def run_measurement(
     output_json = job_dir / "metrics.json"
     log_path = job_dir / "measure.log"
 
-    env = {
-        **os.environ,
-        "MEASURE_MODEL_PATH": str(model_path),
-        "MEASURE_OUTPUT_JSON": str(output_json),
-    }
+    # Allowlisted env only (see config.child_env): the measurement subprocess loads
+    # models from the Hub, so it needs the HF token but none of the cloud secrets.
+    # Forward any MEASURE_* overrides the caller set (dataset/window/trust flag).
+    measure_overrides = {k: v for k, v in os.environ.items() if k.startswith("MEASURE_")}
+    env = child_env(
+        {
+            **measure_overrides,
+            "MEASURE_MODEL_PATH": str(model_path),
+            "MEASURE_OUTPUT_JSON": str(output_json),
+        }
+    )
 
     with log_path.open("wb") as logf:
         proc = subprocess.run(

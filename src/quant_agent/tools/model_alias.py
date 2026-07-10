@@ -70,9 +70,9 @@ def resolve(name: str) -> ResolveResult:
 
     hits = _hf_search(name)
     if hits:
-        return ResolveResult(
-            model_id=hits[0] if len(hits) == 1 else None,
-            candidates=hits,
-            source="hf_search",
-        )
+        # Never auto-accept a search result — even a single hit. A fuzzy/typo'd phrase
+        # can resolve to an attacker-controlled repo that then gets loaded (and, if
+        # trust_remote_code is enabled, executed). Surface candidates and let the user
+        # confirm an exact org/repo id or add an alias.
+        return ResolveResult(model_id=None, candidates=hits, source="hf_search")
     return ResolveResult(model_id=None, candidates=[], source="unresolved")

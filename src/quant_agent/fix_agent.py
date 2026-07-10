@@ -44,6 +44,9 @@ Failed job:
   script:     {script_path}
   attempt:    {attempt} of {max_attempts}
 
+Prior repair attempts on this failure chain (oldest first):
+{prior_attempts_block}
+
 Workflow — follow in order:
 
   1. read_job_logs(job_id="{job_id}") — read the stdout + stderr tail. Identify the
@@ -53,7 +56,8 @@ Workflow — follow in order:
       so you know the exact text in the script. edit_script's `old` arg must match
       the file's content exactly once — guessing from the traceback is unreliable.
 
-  2. Classify the failure and pick ONE fix:
+  2. Classify the failure and pick ONE fix — it must be DIFFERENT from every fix
+     listed under "Prior repair attempts" above (those already failed):
        - ImportError / ModuleNotFoundError → `install_method_venv` with a targeted
          pip step (e.g. ["pip install transformers==4.46.3"]) or `run_in_venv`
          with `pip install <pkg>`.
@@ -68,8 +72,11 @@ Workflow — follow in order:
          a one-sentence explanation of why this is unfixable so the orchestrator
          can surface it to the user.
 
-  3. If you applied a fix in step 2, call relaunch_job(job_id="{job_id}"). This
-     launches a NEW job with parent_job_id="{job_id}" and terminates this loop.
+  3. If you applied a fix in step 2, call
+     relaunch_job(job_id="{job_id}", fix_description="<one sentence: what you changed>").
+     This launches a NEW job with parent_job_id="{job_id}" and terminates this loop.
+     The fix_description is recorded so the next repair attempt (if any) knows what
+     was already tried — make it specific (package + version, exact flag change).
 
 Apply exactly one fix per attempt. Prefer venv surgery (run_in_venv /
 install_method_venv) over script edits. If unsure, inspect the cloned repo via
@@ -77,6 +84,46 @@ list_repo_dir / read_repo_file / github_readme before editing.
 
 Stop as soon as relaunch_job returns status="ok" — do not continue iterating.
 """
+
+
+def _format_prior_attempts(
+    prior_attempts: list[dict] | None, same_error: bool
+) -> str:
+    """Render the repair history block for the prompt.
+
+    Each entry describes one earlier relaunch: the fix that was applied (the
+    agent's own fix_description, persisted as JobMeta.fix_note), the job it
+    produced, and how that job ended. ``same_error`` is set by the supervisor
+    when the latest failed job's root error is identical to its parent's —
+    i.e. the last fix demonstrably changed nothing.
+    """
+    if not prior_attempts:
+        return "  (none — this is the first repair attempt on this chain)"
+    lines: list[str] = []
+    for i, a in enumerate(prior_attempts, start=1):
+        fix = a.get("fix") or "(no fix description recorded)"
+        outcome = a.get("status") or "failed"
+        if a.get("exit_code") is not None:
+            outcome += f" (exit {a['exit_code']})"
+        lines.append(f"  {i}. fix applied: {fix}")
+        lines.append(f"     -> relaunched as job {a.get('job_id', '?')}: {outcome}")
+        if a.get("error_line"):
+            lines.append(f"     root error: {a['error_line']}")
+    if same_error:
+        lines.append("")
+        lines.append(
+            "  WARNING: the most recent fix did NOT change the failure — the relaunched"
+        )
+        lines.append(
+            "  job died with the SAME root error as its parent. Do NOT repeat that fix."
+        )
+        lines.append(
+            "  Diagnose deeper (different package/version, different entry point, build"
+        )
+        lines.append(
+            "  the CUDA extension) or classify the failure as non-retryable and stop."
+        )
+    return "\n".join(lines)
 
 
 def _extract_new_job_id(final_state: dict) -> str | None:
@@ -104,8 +151,16 @@ def run(
     attempt: int,
     max_attempts: int,
     script_path: str | None = None,
+    prior_attempts: list[dict] | None = None,
+    same_error: bool = False,
 ) -> str | None:
-    """Run the Fix ReAct loop. Returns the new job_id on a successful relaunch, else None."""
+    """Run the Fix ReAct loop. Returns the new job_id on a successful relaunch, else None.
+
+    ``prior_attempts`` carries the repair history for this failure chain (one dict
+    per earlier relaunch: fix, job_id, status, exit_code, error_line) so the agent
+    doesn't re-apply a fix that already failed. ``same_error`` flags that the latest
+    relaunch died with the identical root error as its parent.
+    """
     s = load_settings()
 
     meta = executor.refresh_status(job_id)
@@ -131,6 +186,7 @@ def run(
         script_path=resolved_script_path,
         attempt=attempt,
         max_attempts=max_attempts,
+        prior_attempts_block=_format_prior_attempts(prior_attempts, same_error),
     )
 
     llm = ChatAnthropic(model=s.model, api_key=s.anthropic_api_key, temperature=0)

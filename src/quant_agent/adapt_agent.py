@@ -1,14 +1,18 @@
 """Adapt agent: clone the method's repo, build its venv, and author a script.
 
 ReAct loop that:
-  1. Reads the repo README to learn install + usage.
-  2. Clones the repo into .venvs/<method_id>/repo/.
-  3. Builds a method-specific venv at .venvs/<method_id>/ and runs the repo's
+  1. Clones the method repo into .venvs/<method_id>/repo/ and reads its README
+     locally (full tree, no GitHub API rate limits).
+  2. Builds a method-specific venv at .venvs/<method_id>/ and runs the repo's
      install steps (torch + transformers baseline installed automatically).
-  4. Inspects the cloned source locally to find an example entry point.
-  5. Writes either a standalone script (importing the installed library) or a
+  3. Learns the TARGET model's exact architecture: full config.json
+     (fetch_model_config) + the meta-device module tree (inspect_model_architecture,
+     run in the method venv). This is what the quantizer's layer map is written against.
+  4. Consults the method's source paper (read_paper) when the repo is thin.
+  5. Inspects the cloned source locally to find an example entry point.
+  6. Writes either a standalone script (importing the installed library) or a
      wrapper that subprocess-invokes the repo's example with filled-in args.
-  6. Validates via ast.parse + dry-import (stdlib-only wrappers pass trivially).
+  7. Validates via ast.parse + dry-import (stdlib-only wrappers pass trivially).
 
 Returns (script_path, script_code) — the orchestrator hands the code off to the
 executor, which launches it with .venvs/<method_id>/bin/python.
@@ -28,20 +32,21 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 
+from . import executor
 from .config import load_settings
 from .schemas import MethodCandidate
 from .tools import (
     clone_method_repo,
-    github_file,
-    github_list_dir,
-    github_readme,
+    fetch_model_config,
     hf_model_info,
     install_method_venv,
     list_repo_dir,
     read_repo_file,
     run_in_venv,
 )
-from .tools.rag import rag_search
+from .tools.model_arch import inspect_architecture_core
+from .tools.paper import read_paper_text
+from .tools.recommender import load_catalog
 from .tools.script_io import ValidationSession, make_write_script_tool
 
 log = logging.getLogger(__name__)
@@ -55,6 +60,7 @@ Chosen method:
   name:      {method_name}
   repo_url:  {repo_url}
   bits:      {bits}
+  paper:     {arxiv_id}
 
 Hyperparameters (TUNE-LOCKED — must appear verbatim in the generated script as the
 configured values for this method's quantizer; do not substitute defaults). When this
@@ -64,6 +70,7 @@ the method's own defaults apply.
 
 Target model: {model_id}
 Output script path: {script_path}
+Output model directory (save the quantized weights EXACTLY here — nowhere else): {output_dir}
 
 Per-method paths (created by the tools below):
   venv:       .venvs/{method_id}/            (python at .venvs/{method_id}/bin/python)
@@ -71,12 +78,13 @@ Per-method paths (created by the tools below):
 
 Workflow — follow in order:
 
-  1. github_readme(repo_url="{repo_url}") — learn install + usage.
+  1. clone_method_repo(method_id="{method_id}", repo_url="{repo_url}")
+     Clones the FULL repo to .venvs/{method_id}/repo/ (idempotent). Then read the
+     README locally to learn install + usage:
+       read_repo_file(method_id="{method_id}", path="README.md")
+     (try README.rst / docs/ if there is no README.md).
 
-  2. clone_method_repo(method_id="{method_id}", repo_url="{repo_url}")
-     Clones to .venvs/{method_id}/repo/ (idempotent).
-
-  3. Identify `install_steps` from the README. Examples:
+  2. Identify `install_steps` from the README. Examples:
         Research repos:     ["pip install -r requirements.txt", "pip install -e ."]
                             or ["pip install -e ."]
         Pip-packaged libs:  ["pip install autoawq"]   (for awq)
@@ -86,31 +94,48 @@ Workflow — follow in order:
      A baseline of torch==2.3.1 (cu121) + transformers + accelerate + safetensors +
      sentencepiece is ALWAYS installed first. Do NOT duplicate those in install_steps.
 
-  4. install_method_venv(method_id="{method_id}", install_steps=[...])
+  3. install_method_venv(method_id="{method_id}", install_steps=[...])
      Creates the venv and runs the steps. If it errors:
        - Read the last stderr lines carefully.
        - Adjust install_steps (add a missing dep, drop an optional broken step).
        - Retry ONCE. If it still fails, write a best-effort script anyway — the
          executor will surface the real error at runtime.
 
-  5. Find the example entry point in the cloned repo:
+  4. Learn the TARGET model's architecture BEFORE writing the quantizer config:
+       fetch_model_config(model_id="{model_id}")
+         Full config.json — read num_key_value_heads (GQA), intermediate_size,
+         tie_word_embeddings, MoE/rope fields, and trust_remote_code_required.
+       inspect_model_architecture()
+         Instantiates {model_id} on the meta device (no weight download) inside
+         THIS method's venv and returns the exact module tree (Linear/Embedding
+         names + shapes, collapsed across repeated layers). Use these REAL module
+         names whenever the method needs a layer target/skip map — do not guess
+         layer names. (Requires the venv from step 3; if trust_remote_code is
+         required and not granted it returns a config-only summary.)
+
+  5. If the repo's README/examples are thin or the algorithm/hyperparameters are
+     unclear, consult the method's paper:
+       read_paper(section="method")   (or read_paper() for the whole paper;
+       other useful sections: "quantization", "experiments", "algorithm")
+
+  6. Find the example entry point in the cloned repo:
        list_repo_dir(method_id="{method_id}", path="examples")
        list_repo_dir(method_id="{method_id}", path="scripts")
        list_repo_dir(method_id="{method_id}", path="")   (if needed)
      Then read_repo_file on 1–2 most-likely entry files to see their API.
 
-  6. (Optional but recommended) run_in_venv(method_id="{method_id}",
+  7. (Optional but recommended) run_in_venv(method_id="{method_id}",
         command="python <entry_path> --help") to confirm the entry is invokable
      and to discover the real arg flag names.
 
-  7. Decide the script style and write it via
+  8. Decide the script style and write it via
      write_script(path="{script_path}", code=...):
 
      STYLE A — Standalone import (preferred when the method has a stable Python API,
      e.g. autoawq, gptqmodel, hqq, bitsandbytes, or an importable module in the
      cloned repo). Write a single Python file that imports the library and runs
      quantization in-process. Must load the model from HF by id `{model_id}` and
-     save output to ./quantized/{method_id}-<safe_model>/.
+     save output to EXACTLY this directory: {output_dir}
 
      STYLE B — Wrapper subprocess (preferred for research repos whose usage is
      "python examples/foo.py --model ..."). Write a Python file that:
@@ -118,10 +143,15 @@ Workflow — follow in order:
         - Reads HF_TOKEN from env (HUGGINGFACE_HUB_TOKEN or HF_TOKEN) and passes it
           into the child env.
         - Computes REPO = pathlib.Path(".venvs/{method_id}/repo").resolve()
+        - Builds the child env by forwarding ONLY PATH plus the HF token — do NOT
+          splat the whole os.environ into the child:
+            hf = os.environ.get("HUGGINGFACE_HUB_TOKEN") or os.environ.get("HF_TOKEN") or ""
+            child = {{"PATH": os.environ.get("PATH", "")}}
+            if hf: child["HUGGINGFACE_HUB_TOKEN"] = child["HF_TOKEN"] = hf
         - subprocess.run([sys.executable, "<entry_path_relative_to_repo>",
                           "<flag_name>", "{model_id}", "<output_flag>", str(OUT)],
-                          cwd=REPO, env={{**os.environ, ...}}, check=True)
-        - OUT = pathlib.Path("./quantized/{method_id}-<safe_model>").resolve()
+                          cwd=REPO, env=child, check=True)
+        - OUT = pathlib.Path("{output_dir}").resolve()
         - The EXACT flag names MUST come from the --help output or the example source
           you read — do NOT invent flag names.
 
@@ -129,6 +159,9 @@ Workflow — follow in order:
        - Quantize the real model at `{model_id}`.
        - Handle HF gated models: read HF_TOKEN from env and pass to every loader/
          tokenizer call (or login()) and into the child env for wrapper style.
+       - trust_remote_code: pass trust_remote_code={trust_remote_code} to every
+         from_pretrained / AutoConfig / AutoModel loader. This model's config
+         {trust_hint}. Do not override what fetch_model_config reported.
        - Print a final line with the quantized model's on-disk size so success is
          visible in stdout.
        - Begin the script with a header comment block:
@@ -145,6 +178,15 @@ def _format_hyperparameters_block(hyperparameters: dict | None) -> str:
     if not hyperparameters:
         return "(none — use method defaults)"
     return json.dumps(hyperparameters, indent=2, sort_keys=True)
+
+
+def _catalog_arxiv_id(method_id: str) -> str | None:
+    """Look up the method's arxiv_id from the catalog (read_paper is scoped to it)."""
+    for m in load_catalog():
+        if m.get("id") == method_id:
+            aid = m.get("arxiv_id")
+            return str(aid) if aid else None
+    return None
 
 
 def _safe_slug(s: str) -> str:
@@ -166,6 +208,8 @@ def run(
     *,
     hyperparameters: dict | None = None,
     script_suffix: str | None = None,
+    output_dir: str | None = None,
+    trust_remote_code: bool = False,
 ) -> tuple[str, str]:
     """Run the Adapt ReAct loop. Returns (script_path, script_code).
 
@@ -178,11 +222,22 @@ def run(
 
     ``script_suffix`` lets the orchestrator land successive tune iterations at
     distinct paths (e.g. ``_iter2``) so prior iterations' scripts aren't overwritten.
+
+    ``output_dir`` is the exact on-disk directory the generated script must save the
+    quantized weights to. When None it defaults to the canonical location; the tune
+    loop passes a per-iteration dir so iterations don't overwrite/prune each other.
+
+    ``trust_remote_code`` gates execution of a model's custom modeling code (models
+    whose config has ``auto_map``). Default False. When False, architecture
+    introspection falls back to a config-only summary for such models and the
+    generated script must not set ``trust_remote_code=True``.
     """
     s = load_settings()
 
     if hyperparameters is None:
         hyperparameters = method.hyperparameters
+    if output_dir is None:
+        output_dir = executor.default_output_dir(method.id, model_id)
 
     out_dir = s.output_dir
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -192,34 +247,56 @@ def run(
     session = ValidationSession(method_id=method.id)
     write_script = make_write_script_tool(session)
 
+    arxiv_id = _catalog_arxiv_id(method.id)
+
     @tool
-    def rag_search_for_method(query: str, k: int = 6) -> str:
-        """Search the quantization-literature index, scoped to the chosen method."""
-        return rag_search.invoke({"query": query, "k": k, "method_id": method.id})
+    def read_paper(section: str | None = None) -> str:
+        """Read the chosen method's source paper (arXiv). Pass `section` (e.g. 'method',
+        'quantization', 'experiments', 'algorithm') to focus, or omit for the whole paper.
+        Use this when the repo README/examples don't make the API or hyperparameters clear."""
+        return read_paper_text(arxiv_id, section=section)
+
+    @tool
+    def inspect_model_architecture() -> str:
+        """Instantiate the target model on the meta device (no weight download) inside this
+        method's venv and return its exact module tree — Linear/Embedding layer names and
+        shapes, collapsed across repeated blocks. This is the ground truth for which layers
+        the quantizer targets; call it AFTER install_method_venv and use the real names."""
+        return inspect_architecture_core(
+            model_id, method.id, trust_remote_code=trust_remote_code
+        )
 
     tools = [
-        github_readme,
-        github_list_dir,
-        github_file,
         clone_method_repo,
         install_method_venv,
         run_in_venv,
         list_repo_dir,
         read_repo_file,
-        rag_search_for_method,
+        fetch_model_config,
+        inspect_model_architecture,
+        read_paper,
         hf_model_info,
         write_script,
     ]
 
     llm = ChatAnthropic(model=s.model, api_key=s.anthropic_api_key, temperature=0)
+    trust_hint = (
+        "ships custom modeling code (auto_map present), so trust_remote_code IS required"
+        if trust_remote_code
+        else "uses a standard transformers architecture, so trust_remote_code is NOT needed"
+    )
     prompt = _PROMPT.format(
         method_id=method.id,
         method_name=method.name,
         repo_url=method.repo_url,
         bits=method.bits,
+        arxiv_id=arxiv_id or "(none on file — rely on the repo)",
         hyperparameters_block=_format_hyperparameters_block(hyperparameters),
         model_id=model_id,
         script_path=str(script_path),
+        output_dir=output_dir,
+        trust_remote_code=trust_remote_code,
+        trust_hint=trust_hint,
     )
     agent = create_react_agent(llm, tools, prompt=prompt)
 

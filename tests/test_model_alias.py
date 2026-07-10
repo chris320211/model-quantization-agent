@@ -28,11 +28,14 @@ def test_hf_search_fallback_on_unknown_name():
     assert r.model_id is None
 
 
-def test_hf_search_single_hit_auto_picks():
+def test_hf_search_single_hit_not_auto_picked():
+    # A single fuzzy search hit must NOT be auto-accepted — it could be a typo landing
+    # on an attacker-controlled repo. The user must confirm an exact id (SEC-5).
     with patch.object(model_alias, "_hf_search", return_value=["org/Only-One"]):
         r = model_alias.resolve("obscure-model-name")
     assert r.source == "hf_search"
-    assert r.model_id == "org/Only-One"
+    assert r.model_id is None
+    assert r.candidates == ["org/Only-One"]
 
 
 def test_unresolved_when_alias_miss_and_empty_search():

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import shlex
 import signal
@@ -25,7 +26,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .config import REPO_ROOT, load_settings
+from .config import REPO_ROOT, child_env, load_settings
 
 JOBS_ROOT = REPO_ROOT / "jobs"
 VENV_ROOT = REPO_ROOT / ".venvs"
@@ -47,9 +48,11 @@ class JobMeta:
     started_at: str
     finished_at: str | None = None
     exit_code: int | None = None
-    status: str = "running"  # running | completed | failed | killed
+    status: str = "running"  # running | completed | failed | killed | timeout
+    pgid: int | None = None
     parent_job_id: str | None = None
     attempt: int = 1
+    fix_note: str | None = None  # what the fix agent changed before relaunching as this job
     tune_iter: int = 0
     hyperparameters: dict | None = None
     metrics: dict | None = None
@@ -58,9 +61,25 @@ class JobMeta:
         return json.dumps(asdict(self), indent=2)
 
 
+# Job ids are minted only by _new_job_id; anything else reaching a JOBS_ROOT / job_id
+# join is caller-supplied (LLM tools pass job_id) and must be rejected before it can
+# traverse out of the jobs tree.
+_JOB_ID_RE = re.compile(r"^\d{8}T\d{6}Z-[0-9a-f]{6}$")
+
+
 def _new_job_id() -> str:
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     return f"{ts}-{secrets.token_hex(3)}"
+
+
+def valid_job_id(job_id: str) -> bool:
+    """True if job_id matches the minted format (safe to use in a JOBS_ROOT join)."""
+    return isinstance(job_id, str) and bool(_JOB_ID_RE.match(job_id))
+
+
+def _require_valid_job_id(job_id: str) -> None:
+    if not valid_job_id(job_id):
+        raise FileNotFoundError(f"No such job: {job_id!r}")
 
 
 def _pid_alive(pid: int) -> bool:
@@ -73,9 +92,37 @@ def _pid_alive(pid: int) -> bool:
         return True  # process exists, just not ours
 
 
+def _job_alive(meta: JobMeta) -> bool:
+    """True if the job's process is still running AND is the same one we launched.
+
+    When a pgid was recorded, require the live process's group to still match it —
+    a recycled PID belonging to an unrelated process will have a different pgid, so
+    we don't mistake it for the job (which would otherwise wedge status at 'running').
+    """
+    if not _pid_alive(meta.pid):
+        return False
+    if meta.pgid is None:
+        return True
+    try:
+        return os.getpgid(meta.pid) == meta.pgid
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
 def venv_python(method_id: str) -> Path:
     """Path to the python binary inside a method-specific venv (.venvs/<method_id>/bin/python)."""
     return VENV_ROOT / method_id / "bin" / "python"
+
+
+def default_output_dir(method_id: str, model_id: str) -> str:
+    """Canonical on-disk location for a method's quantized weights.
+
+    Single source of truth so the generated script's save path and JobMeta.output_dir
+    (used by the tune-loop pruner) never disagree.
+    """
+    return f"./quantized/{method_id}-{model_id.replace('/', '__')}"
 
 
 def launch(
@@ -85,6 +132,7 @@ def launch(
     output_dir: str,
     parent_job_id: str | None = None,
     attempt: int = 1,
+    fix_note: str | None = None,
 ) -> JobMeta:
     """Spawn the quantization script in its method venv, detached from the agent."""
     py = venv_python(method_id)
@@ -119,8 +167,17 @@ def launch(
         stdin=subprocess.DEVNULL,
         cwd=str(REPO_ROOT),
         start_new_session=True,  # setsid: survives SSH disconnect (SIGHUP)
-        env={**os.environ},
+        # Minimal allowlisted env: the LLM-authored quantization script must never
+        # inherit the parent's cloud secrets (see config.child_env). HF token only.
+        env=child_env(),
     )
+
+    # With start_new_session the child leads its own process group (pgid == pid).
+    # Recording it lets us detect PID reuse later before signaling.
+    try:
+        pgid = os.getpgid(proc.pid)
+    except ProcessLookupError:
+        pgid = proc.pid
 
     meta = JobMeta(
         job_id=job_id,
@@ -131,14 +188,17 @@ def launch(
         output_dir=output_dir,
         pid=proc.pid,
         started_at=datetime.now(timezone.utc).isoformat(),
+        pgid=pgid,
         parent_job_id=parent_job_id,
         attempt=attempt,
+        fix_note=fix_note,
     )
     (job_dir / "meta.json").write_text(meta.to_json())
     return meta
 
 
 def _read_meta(job_id: str) -> JobMeta:
+    _require_valid_job_id(job_id)
     path = JOBS_ROOT / job_id / "meta.json"
     if not path.exists():
         raise FileNotFoundError(f"No such job: {job_id}")
@@ -159,14 +219,21 @@ def refresh_status(job_id: str) -> JobMeta:
 
     exit_sentinel = JOBS_ROOT / job_id / "exit_code"
     if exit_sentinel.exists():
-        code = int(exit_sentinel.read_text().strip() or "-1")
+        raw = exit_sentinel.read_text().strip()
+        # The wrapper creates the sentinel (via `> file`) and then writes the code,
+        # so there's a brief window where it exists but is empty or partial. Treat
+        # unparseable content as "still running" rather than a spurious failure.
+        try:
+            code = int(raw)
+        except ValueError:
+            return meta
         meta.exit_code = code
         meta.status = "completed" if code == 0 else "failed"
         meta.finished_at = datetime.now(timezone.utc).isoformat()
         _write_meta(meta)
         return meta
 
-    if not _pid_alive(meta.pid):
+    if not _job_alive(meta):
         # process gone but no sentinel — probably killed externally
         meta.status = "killed"
         meta.finished_at = datetime.now(timezone.utc).isoformat()
@@ -174,16 +241,74 @@ def refresh_status(job_id: str) -> JobMeta:
     return meta
 
 
-def wait_for_job(job_id: str, poll_interval: float = 2.0) -> JobMeta:
-    """Block until a job leaves the 'running' state. Returns the final meta."""
+DEFAULT_MAX_WAIT_S = 6 * 3600  # a single quantization/measurement job upper bound
+
+
+def wait_for_job(
+    job_id: str,
+    poll_interval: float = 2.0,
+    max_wait_s: float | None = DEFAULT_MAX_WAIT_S,
+) -> JobMeta:
+    """Block until a job leaves the 'running' state. Returns the final meta.
+
+    Bounded by ``max_wait_s`` (None disables the bound): a hung job that never writes
+    its exit sentinel would otherwise block the orchestrator forever. On timeout the
+    job's process group is terminated and the status is set to 'timeout'.
+    """
+    deadline = time.monotonic() + max_wait_s if max_wait_s is not None else None
     while True:
         meta = refresh_status(job_id)
         if meta.status != "running":
             return meta
+        if deadline is not None and time.monotonic() >= deadline:
+            try:
+                os.killpg(os.getpgid(meta.pid), signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass
+            meta.status = "timeout"
+            meta.finished_at = datetime.now(timezone.utc).isoformat()
+            _write_meta(meta)
+            return meta
         time.sleep(poll_interval)
 
 
+# A line that looks like the root cause of a Python failure: "XxxError: ...",
+# "SomeException", "error: ...", or a loud "ERROR ..." log line.
+_ERROR_LINE_RE = re.compile(r"[A-Za-z_.]*(?:Error|Exception)\b|\berror:|\bERROR\b")
+
+
+def error_signature(job_id: str) -> str | None:
+    """Best-effort root-cause line from a job's logs, for cross-attempt comparison.
+
+    Scans BOTH streams (stderr first) for the LAST line that looks like a Python
+    exception or error message — for a traceback that's the final ``XxxError:
+    message`` line. An error-pattern match in either stream beats any fallback:
+    stderr often ends in run-varying progress noise (tqdm/HF-hub download bars)
+    while the real error was print()ed to stdout, and taking the noise line would
+    make two identical failures look different. Only when neither stream has an
+    error-looking line does it fall back to the last non-empty line (stderr, then
+    stdout). Returns None when the job has no logs on disk. Two failed jobs with
+    equal signatures are treated by the supervisor as "the fix changed nothing".
+    """
+    try:
+        logs = tail(job_id, n_lines=120)
+    except FileNotFoundError:
+        return None
+    streams: list[list[str]] = []
+    for name in ("stderr.log", "stdout.log"):
+        lines = [ln.strip() for ln in logs.get(name, "").splitlines() if ln.strip()]
+        streams.append(lines)
+        for ln in reversed(lines):
+            if _ERROR_LINE_RE.search(ln):
+                return ln
+    for lines in streams:
+        if lines:
+            return lines[-1]
+    return None
+
+
 def tail(job_id: str, n_lines: int = 80) -> dict[str, str]:
+    _require_valid_job_id(job_id)
     job_dir = JOBS_ROOT / job_id
     if not job_dir.exists():
         raise FileNotFoundError(f"No such job: {job_id}")
@@ -217,7 +342,11 @@ def kill(job_id: str) -> JobMeta:
     if meta.status not in {"running"}:
         return meta
     try:
-        os.killpg(os.getpgid(meta.pid), signal.SIGTERM)
+        live_pgid = os.getpgid(meta.pid)
+        # Only signal if the live process is still the job we launched; a recycled
+        # PID belonging to something else has a different pgid — never signal it.
+        if meta.pgid is None or live_pgid == meta.pgid:
+            os.killpg(live_pgid, signal.SIGTERM)
     except ProcessLookupError:
         pass
     meta.status = "killed"

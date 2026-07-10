@@ -31,7 +31,7 @@ def execute_quantization(
         options:     Optional dict; currently used only for output_dir override.
     """
     opts = dict(options or {})
-    output_dir = opts.get("output_dir") or f"./quantized/{method_id}-{model_id.replace('/', '__')}"
+    output_dir = opts.get("output_dir") or executor.default_output_dir(method_id, model_id)
 
     try:
         meta = executor.launch(method_id, model_id, script_code, output_dir)
@@ -120,6 +120,8 @@ def read_script(job_id: str, max_bytes: int = _SCRIPT_READ_MAX_BYTES) -> str:
     at ``max_bytes`` and reports the truncation so you can re-read with a larger
     cap if needed.
     """
+    if not executor.valid_job_id(job_id):
+        return json.dumps({"status": "error", "error": f"invalid job_id: {job_id!r}"})
     script = executor.JOBS_ROOT / job_id / "script.py"
     if not script.exists():
         return json.dumps({"status": "error", "error": f"no such script: {script}"})
@@ -146,6 +148,8 @@ def edit_script(job_id: str, old: str, new: str) -> str:
     validated with ast.parse; syntax errors roll back the change. Returns JSON with
     status + the number of bytes written on success.
     """
+    if not executor.valid_job_id(job_id):
+        return json.dumps({"status": "error", "error": f"invalid job_id: {job_id!r}"})
     script = executor.JOBS_ROOT / job_id / "script.py"
     if not script.exists():
         return json.dumps({"status": "error", "error": f"no such script: {script}"})
@@ -181,8 +185,14 @@ def edit_script(job_id: str, old: str, new: str) -> str:
 
 
 @tool
-def relaunch_job(job_id: str) -> str:
+def relaunch_job(job_id: str, fix_description: str) -> str:
     """Re-launch a failed job's (possibly edited) script under the same method venv.
+
+    ``fix_description`` is a one-sentence summary of the fix you just applied
+    (e.g. "pinned transformers==4.46.3 in the awq venv" or "changed --model_path
+    flag to --model"). It is recorded on the new job's meta so that, if this
+    relaunch also fails, the next repair attempt sees what was already tried and
+    does not repeat it.
 
     Reads jobs/<job_id>/script.py and the parent job's meta.json (for method_id,
     model_id, output_dir), then spawns a new background job whose meta.parent_job_id
@@ -211,6 +221,7 @@ def relaunch_job(job_id: str) -> str:
             output_dir=parent.output_dir,
             parent_job_id=job_id,
             attempt=parent.attempt + 1,
+            fix_note=fix_description.strip() or None,
         )
     except (ValueError, RuntimeError) as e:
         return json.dumps({"status": "error", "error": str(e)})
@@ -222,6 +233,7 @@ def relaunch_job(job_id: str) -> str:
             "parent_job_id": job_id,
             "pid": meta.pid,
             "attempt": meta.attempt,
+            "fix_note": meta.fix_note,
         },
         indent=2,
     )

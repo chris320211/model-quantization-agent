@@ -114,3 +114,81 @@ def test_extract_new_job_id_picks_latest_relaunch(monkeypatch):
         ),
     ]
     assert fix_agent._extract_new_job_id({"messages": messages}) == "JOB3"
+
+
+def test_format_prior_attempts_first_attempt():
+    block = fix_agent._format_prior_attempts(None, same_error=False)
+    assert "first repair attempt" in block
+
+
+def test_format_prior_attempts_lists_fix_and_error():
+    block = fix_agent._format_prior_attempts(
+        [
+            {
+                "job_id": "JOB2",
+                "fix": "pinned transformers==4.46.3",
+                "status": "failed",
+                "exit_code": 1,
+                "error_line": "ImportError: No module named 'awq'",
+            }
+        ],
+        same_error=False,
+    )
+    assert "pinned transformers==4.46.3" in block
+    assert "JOB2" in block
+    assert "failed (exit 1)" in block
+    assert "ImportError: No module named 'awq'" in block
+    assert "did NOT change the failure" not in block
+
+
+def test_format_prior_attempts_same_error_warning():
+    block = fix_agent._format_prior_attempts(
+        [
+            {
+                "job_id": "JOB2",
+                "fix": "pinned transformers==4.46.3",
+                "status": "failed",
+                "exit_code": 1,
+                "error_line": "ImportError: No module named 'awq'",
+            }
+        ],
+        same_error=True,
+    )
+    assert "did NOT change the failure" in block
+    assert "Do NOT repeat that fix" in block
+
+
+def test_run_injects_prior_attempts_into_prompt(monkeypatch):
+    """The repair history (and same-error warning) must land in the system prompt."""
+    captured: dict = {}
+
+    def fake_create(llm, tools, prompt=None):
+        captured["prompt"] = prompt
+        return SimpleNamespace(invoke=MagicMock(return_value={"messages": []}))
+
+    monkeypatch.setattr(fix_agent, "create_react_agent", fake_create)
+    monkeypatch.setattr(fix_agent, "ChatAnthropic", lambda **kw: MagicMock())
+    monkeypatch.setattr(fix_agent.executor, "refresh_status", lambda jid: _meta(jid))
+
+    fix_agent.run(
+        job_id="JOB2",
+        method=_method(),
+        model_id="m",
+        attempt=2,
+        max_attempts=3,
+        prior_attempts=[
+            {
+                "job_id": "JOB2",
+                "fix": "pinned transformers==4.46.3",
+                "status": "failed",
+                "exit_code": 1,
+                "error_line": "ImportError: No module named 'awq'",
+            }
+        ],
+        same_error=True,
+    )
+
+    prompt = captured["prompt"]
+    assert "pinned transformers==4.46.3" in prompt
+    assert "ImportError: No module named 'awq'" in prompt
+    assert "did NOT change the failure" in prompt

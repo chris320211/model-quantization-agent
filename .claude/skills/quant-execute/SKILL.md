@@ -118,11 +118,12 @@ Run this with `Bash run_in_background: true` so Claude Code returns immediately.
   "exit_code": null,
   "status": "running",
   "parent_job_id": null,
-  "attempt": 1
+  "attempt": 1,
+  "fix_note": null
 }
 ```
 
-(On a fix-retry attempt, set `parent_job_id` to the previous failed `job_id` and bump `attempt`.)
+(On a fix-retry attempt, set `parent_job_id` to the previous failed `job_id`, bump `attempt`, and set `fix_note` to a one-sentence description of the fix you applied — e.g. `"pinned transformers==4.46.3 in the awq venv"` — so later attempts can see what was already tried.)
 
 5. Print the `job_id` and the path to the log files so the user can `tail -f jobs/<id>/stdout.log` from another shell if they want.
 
@@ -144,13 +145,15 @@ Outcomes:
 
 ## Phase 5 — Fix loop (max 3 attempts)
 
-This phase is a verbatim port of the `fix_agent.py` playbook (`src/quant_agent/fix_agent.py:36-79`). You are now the Fix agent for `job_id <id>` (`<method_name>` / `<model_id>`), attempt `<attempt>` of 3.
+This phase is a port of the `fix_agent.py` playbook (`src/quant_agent/fix_agent.py:36-86`). You are now the Fix agent for `job_id <id>` (`<method_name>` / `<model_id>`), attempt `<attempt>` of 3.
 
 You must NOT switch methods — the user already chose `<method_name>`. You apply **one** fix per attempt and relaunch.
 
-### Step 5a — Read logs
+### Step 5a — Read logs AND the repair history
 
 `Read jobs/<job_id>/stdout.log` and `Read jobs/<job_id>/stderr.log` (last 200 lines each). Identify the failing step and the root-cause error line.
+
+If this job has a `parent_job_id` (i.e. it is itself a relaunch), walk the parent chain's `meta.json` files and collect each ancestor's `fix_note` — that is the list of fixes already tried on this failure. Compare this job's root-cause error line against the parent's logs: if it is the SAME error, the previous fix changed nothing — do NOT repeat it; diagnose deeper or classify as non-retryable.
 
 ### Step 5b — If you plan to edit the script, read it first
 
@@ -170,7 +173,7 @@ Run `Read jobs/<job_id>/script.py` before any `Edit` call so you know the exact 
 | `No space left on device` | **Non-retryable.** Tell the user to free EBS or remount with more space. |
 | Anything else not above | Inspect the cloned repo (`Read .venvs/<method_id>/repo/<file>`) or the upstream README (`WebFetch`) before guessing. If you still can't classify, mark non-retryable and stop. |
 
-**Apply exactly one fix.** Prefer venv surgery (pip install / setup.py install) over script edits. If unsure, inspect the cloned repo before editing.
+**Apply exactly one fix — and it must differ from every `fix_note` collected in Step 5a** (those already failed). Prefer venv surgery (pip install / setup.py install) over script edits. If unsure, inspect the cloned repo before editing.
 
 ### Step 5d — Relaunch (only if you applied a fix)
 
@@ -181,6 +184,7 @@ If the fix was applied: relaunch by repeating Phase 3 with:
 - A new `job_id`.
 - `parent_job_id` set to the previous failed `job_id`.
 - `attempt` incremented (the previous job's attempt + 1).
+- `fix_note` set to a one-sentence description of the fix you just applied (specific: package + version, exact flag change).
 
 Then return to Phase 4. Repeat until success or `attempt > 3` or non-retryable.
 

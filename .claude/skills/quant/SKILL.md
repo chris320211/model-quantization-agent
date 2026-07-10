@@ -48,7 +48,7 @@ Run these in parallel.
 
 ## Phase 2 — Research
 
-Read `reference/methods.yaml` (the catalog, ~40 methods).
+Read `reference/methods.yaml` (the catalog, 34 methods).
 
 Your job is to survey **every** catalog method and produce a ranked candidate list. **You do not pick a winner — the user picks.**
 
@@ -223,14 +223,14 @@ Do not offer to run the script — execution is intentionally out of scope.
 - **Don't invent flag names.** Style B subprocesses must use flag strings copied from the cloned example's argparse/click block. If you can't find the source, fall back to Style A.
 - **Don't duplicate the torch/transformers baseline** in the install-steps comment block beyond the explicit baseline lines shown above. The Python agent treats those as preinstalled.
 - **Don't reference `.venvs/<method>/` paths in the script.** The Python agent uses that layout because its executor builds those venvs; this skill does not. Use `/tmp/quant-<chosen.id>/repo` for cloned-repo references and let the user activate their own venv.
-- **Don't fan out RAG calls or arxiv fetches during Research.** Research is catalog-only. The `notes` field in `methods.yaml` plus your model knowledge is the grounding.
+- **Don't fan out per-method retrieval or arxiv fetches during Research.** Research is catalog-only. The `notes` field in `methods.yaml` plus your model knowledge is the grounding.
 - **Don't pick a winner during Research.** The user picks.
 - **Don't proceed if the model can't be resolved.** Ask for an exact HF id.
 - **Don't recommend sub-4-bit on pre-Hopper GPUs.** See the Bit-width hardware rule in Phase 2. NVIDIA hardware has no native 1/2/3-bit datatype; software-only dequant kernels for those bit widths target sm_80 and have poor performance on sm_86 (A10G), no validated path on Turing/Volta. If the user explicitly asks for 2-bit on A10G, push back and suggest 4-bit on a method like AWQ or AutoRound instead.
 
 ## Reference files (bundled in this skill)
 
-- `reference/methods.yaml` — the 40-method catalog, copied verbatim from `seed/methods.yaml`. Authoritative for `id`, `repos`, `bits`, `quality`, `speedup`, `needs_calibration`, `notes`.
+- `reference/methods.yaml` — the 34-method catalog, copied verbatim from `seed/methods.yaml`. Authoritative for `id`, `repos`, `bits`, `quality`, `speedup`, `needs_calibration`, `notes`.
 - `reference/model_aliases.yaml` — fuzzy model phrase → canonical HF id, copied verbatim from `seed/model_aliases.yaml`.
 - `reference/aws_instances.yaml` — instance type → `{vram_gb, gpu_count, gpu}`, copied verbatim from `seed/aws_instances.yaml`.
 - `reference/gpu_specs.yaml` — GPU model → `{compute_capability, gpu_arch}`, copied verbatim from `seed/gpu_specs.yaml`.

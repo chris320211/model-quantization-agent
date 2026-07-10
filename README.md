@@ -2,9 +2,9 @@
 
 Two-subagent LangChain pipeline that ports quantization to HuggingFace LLMs. Given a free-form request like `"port llama2 7b to g5.xlarge"`, it:
 
-1. **Research agent** resolves the model + instance, surveys the catalog + RAG index, and returns **3–8 candidate methods** (no winner picked).
+1. **Research agent** resolves the model + instance, walks the catalog, and returns **3–8 candidate methods** (no winner picked).
 2. **You pick one** from stdin.
-3. **Adapt agent** reads the chosen repo's actual README + source via the GitHub API, writes a script, and validates it (`ast.parse` + top-level dry-import in the method's venv; up to 3 retries).
+3. **Adapt agent** clones the chosen method's repo, builds its venv, learns the target model's exact architecture (full `config.json` + a meta-device module-tree introspection), consults the method's paper when needed, writes a script, and validates it (`ast.parse` + top-level dry-import in the method's venv; up to 3 retries).
 4. The validated script is launched end-to-end on the box (skip with `--dry`).
 
 ## Setup
@@ -16,14 +16,13 @@ pip install -e .
 quant-agent setup
 ```
 
-`quant-agent setup` prompts for `ANTHROPIC_API_KEY` (required) and optionally `GITHUB_TOKEN` / `HUGGINGFACE_HUB_TOKEN`. Input is hidden (via `getpass`), so nothing lands in shell history. It writes `.env` to the repo root with mode `0600` and is gitignored. By default it makes a 1-token call to Anthropic to verify the key; pass `--no-validate` to skip, `--force` to overwrite an existing file, or `--no-optional` to skip the optional tokens.
+`quant-agent setup` prompts for `ANTHROPIC_API_KEY` (the only required credential) plus optional `GITHUB_TOKEN` (raises GitHub rate limits for repo clones/README fetches) and `HUGGINGFACE_HUB_TOKEN` (gated models). Input is hidden (via `getpass`), so nothing lands in shell history. It writes `.env` to the repo root with mode `0600` and is gitignored. By default it makes a 1-token call to Anthropic to verify the key; pass `--no-validate` to skip, `--force` to overwrite an existing file, or `--no-optional` to skip the optional tokens.
 
 ## Run it
 
 ### Laptop (dry mode — research + script only)
 
 ```bash
-python -m quant_agent.ingest
 quant-agent ask --dry "port llama2 7b to g5.xlarge"
 # -> lists 3-8 candidates with tradeoffs
 # -> you type "1" (or 2..N, or q)
@@ -44,10 +43,9 @@ Use the AWS **Deep Learning AMI GPU PyTorch** (Ubuntu 22.04, CUDA 12.1). Then:
 ```bash
 # once, on the EC2 box:
 git clone <this repo> && cd model-quantization-agent
-bash scripts/bootstrap_ec2.sh           # creates .venvs/{awq,gptq,hqq,bnb}
+bash scripts/bootstrap_ec2.sh           # creates .venvs/{awq,gptq,bnb_nf4,bnb_llm_int8}
 pip install -e .
 quant-agent setup                       # interactive; writes .env (chmod 600)
-python -m quant_agent.ingest
 
 # then, any time:
 quant-agent ask "port llama2 7b to g5.xlarge"
@@ -68,9 +66,9 @@ Jobs run under `setsid` and survive SSH disconnects. State lives in `./jobs/<id>
 
 ## Methods covered
 
-GPTQ, AWQ, SmoothQuant, QuIP#, SpinQuant, HQQ, bitsandbytes (LLM.int8 + NF4), GGUF/llama.cpp k-quants, FP8, OmniQuant, SqueezeLLM, KIVI (KV-cache), LLM-QAT, Marlin, Atom. See `seed/methods.yaml`.
+GPTQ, AWQ, SmoothQuant, QuIP#, SpinQuant, bitsandbytes (LLM.int8 + NF4), FP8, OmniQuant, SqueezeLLM, QuaRot, FlatQuant, AutoRound, AQLM, VPTQ, KIVI (KV-cache), LLM-QAT, and more — 34 methods total. See `seed/methods.yaml` for the authoritative list of ids.
 
-End-to-end execution venvs are wired for: **AWQ, GPTQ, HQQ, bnb-NF4** (the methods in `scripts/bootstrap_ec2.sh`). Other methods surface in Research and are adapted by the Adapt agent; add a new venv in `bootstrap_ec2.sh` and a `METHOD_TO_VENV` entry in `executor.py` to enable end-to-end launch.
+End-to-end execution venvs are wired for: **AWQ, GPTQ, bnb-NF4, bnb-LLM.int8** (the methods in `scripts/bootstrap_ec2.sh`). Other methods surface in Research and are adapted by the Adapt agent, which builds a matching `.venvs/<method_id>/` on demand via `install_method_venv`. Venvs resolve purely by the `.venvs/<method_id>/` naming convention (see `executor.venv_python`); to pre-provision one, add a case to `bootstrap_ec2.sh` keyed by the catalog id.
 
 ## Architecture
 
@@ -78,17 +76,18 @@ End-to-end execution venvs are wired for: **AWQ, GPTQ, HQQ, bnb-NF4** (the metho
                 ┌──────────────────────────────┐
 user input ──► │  Research agent (1 LLM call) │ ──► ResearchReport (3-8 candidates, tradeoffs)
                 │  resolve model + instance    │
-                │  rag_survey + catalog        │
+                │  catalog walk (no RAG)       │
                 └──────────────────────────────┘
                               │
                         stdin: pick 1..N
                               ▼
-                ┌──────────────────────────────┐
-                │  Adapt agent (ReAct loop)    │
-                │  github_readme / list_dir /  │ ──► out/quantize_<model>_<method>.py
-                │  github_file / rag_search /  │      (validated: ast + dry-import)
-                │  hf_model_info / write_script│
-                └──────────────────────────────┘
+                ┌──────────────────────────────────┐
+                │  Adapt agent (ReAct loop)         │
+                │  clone_method_repo / read_repo /  │ ──► out/quantize_<model>_<method>.py
+                │  fetch_model_config /             │      (validated: ast + dry-import)
+                │  inspect_model_architecture /     │
+                │  read_paper / write_script        │
+                └──────────────────────────────────┘
                               │
                               ▼
                   execute_quantization (setsid, per-method venv)
@@ -97,7 +96,7 @@ user input ──► │  Research agent (1 LLM call) │ ──► ResearchRepo
                   check_job / tail_job_logs
 ```
 
-The Research agent uses `ChatAnthropic.with_structured_output(ResearchReport)` — not a ReAct loop. The Adapt agent is a `create_react_agent` with the GitHub + RAG + `write_script` toolset. Default model `claude-sonnet-4-6`; override with `QUANT_AGENT_MODEL`.
+The Research agent uses `ChatAnthropic.with_structured_output(ResearchReport)` — not a ReAct loop, and grounds purely on the structured catalog (no RAG). The Adapt agent is a `create_react_agent` that clones the method repo, introspects the target model's architecture, reads the method's paper, and writes a validated script. Default model `claude-sonnet-4-6`; override with `QUANT_AGENT_MODEL`.
 
 ## Files
 
@@ -105,7 +104,9 @@ The Research agent uses `ChatAnthropic.with_structured_output(ResearchReport)` �
 - `seed/model_aliases.yaml` — fuzzy model name → canonical HuggingFace id.
 - `seed/aws_instances.yaml` — EC2 GPU instance types → VRAM / GPU count / GPU model.
 - `src/quant_agent/research_agent.py` — context loader + structured-output call.
-- `src/quant_agent/adapt_agent.py` — ReAct loop with GitHub-fetching tools + validated `write_script`.
+- `src/quant_agent/adapt_agent.py` — ReAct loop: clone repo + read paper + introspect model architecture + validated `write_script`.
+- `src/quant_agent/tools/paper.py` — `read_paper` (arXiv full-text fetch + cache) for the Adapt agent.
+- `src/quant_agent/tools/model_arch.py` — `fetch_model_config` + meta-device `inspect_model_architecture`.
 - `src/quant_agent/orchestrator.py` — Research → select → Adapt → execute.
 - `src/quant_agent/tools/script_io.py` — `ValidationSession` + ast/dry-import validation.
 - `src/quant_agent/executor.py` — background job launcher + registry.

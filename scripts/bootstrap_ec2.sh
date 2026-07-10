@@ -5,8 +5,10 @@
 # (AWS Deep Learning AMI GPU PyTorch 2.x works out of the box).
 #
 # Idempotent: skips any .venvs/<name>/ that already has a torch install.
+# Venv names MUST match catalog ids in seed/methods.yaml (executor.venv_python
+# resolves .venvs/<method_id>/).
 # Usage:  bash scripts/bootstrap_ec2.sh [methods...]
-#   no args -> install all default methods (awq gptq hqq bnb)
+#   no args -> install all default methods (awq gptq bnb_nf4 bnb_llm_int8)
 
 set -euo pipefail
 
@@ -15,7 +17,7 @@ VENV_ROOT="${REPO_ROOT}/.venvs"
 TORCH_INDEX="${TORCH_INDEX:-https://download.pytorch.org/whl/cu121}"
 PYTHON_BIN="${PYTHON_BIN:-python3.10}"
 
-DEFAULT_METHODS=(awq gptq hqq bnb)
+DEFAULT_METHODS=(awq gptq bnb_nf4 bnb_llm_int8)
 METHODS=("${@:-${DEFAULT_METHODS[@]}}")
 
 command -v nvidia-smi >/dev/null || {
@@ -64,19 +66,16 @@ install_awq() { pip install autoawq; }
 # GPTQ (GPTQModel is the current maintained fork)
 install_gptq() { pip install gptqmodel datasets; }
 
-# HQQ (calibration-free)
-install_hqq() { pip install hqq; }
-
-# bitsandbytes NF4 / LLM.int8
+# bitsandbytes NF4 / LLM.int8 (both catalog ids install the same package)
 install_bnb() { pip install bitsandbytes; }
 
 for m in "${METHODS[@]}"; do
   case "$m" in
-    awq)  make_venv awq  install_awq ;;
-    gptq) make_venv gptq install_gptq ;;
-    hqq)  make_venv hqq  install_hqq ;;
-    bnb)  make_venv bnb  install_bnb ;;
-    *)    echo "[warn] unknown method '$m' — skipping" ;;
+    awq)          make_venv awq          install_awq ;;
+    gptq)         make_venv gptq         install_gptq ;;
+    bnb_nf4)      make_venv bnb_nf4      install_bnb ;;
+    bnb_llm_int8) make_venv bnb_llm_int8 install_bnb ;;
+    *)            echo "[warn] unknown method '$m' — skipping" ;;
   esac
 done
 

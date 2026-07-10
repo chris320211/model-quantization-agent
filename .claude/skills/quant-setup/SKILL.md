@@ -145,9 +145,6 @@ chmod 600 /home/ubuntu/model-quantization-agent/.env
 | Key | Required? | Used by | Notes |
 |-----|-----------|---------|-------|
 | `ANTHROPIC_API_KEY` | yes (Python CLI) | quant-agent CLI | Skills call Claude through the Claude Code session, so skill-only flows do not strictly need this. The Python CLI does. |
-| `VOYAGE_API_KEY` | yes (Python CLI) | quant-agent ingest | Embeddings for the RAG index. Skills do not use RAG. |
-| `QDRANT_URL`, `QDRANT_API_KEY` | yes (Python CLI) | quant-agent ingest/ask | Vector DB for RAG. Skills do not use RAG. |
-| `R2_*` | yes (Python CLI) | quant-agent ingest | Raw-file storage. Skills do not use it. |
 | `HUGGINGFACE_HUB_TOKEN` | for gated models | all skills + CLI | Loader aliases this to `HF_TOKEN` automatically. |
 | `GITHUB_TOKEN` | optional | all | Lifts GitHub API rate limits during README/example fetching. |
 | `QUANT_AGENT_MODEL` | optional | Python CLI | Model id override; defaults to `claude-sonnet-4-6`. |

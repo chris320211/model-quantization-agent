@@ -25,6 +25,11 @@
   maturity: 5
   notes: Layer-wise second-order PTQ using approximate Hessian info. Strong 4-bit
     baseline, widely supported.
+  hyperparameters_default:
+    group_size: {values: [-1, 32, 64, 128, 256], default: 128}
+    desc_act: {values: [true, false], default: false}
+    sym: {values: [true, false], default: true}
+    n_calib_samples: {values: [64, 128, 256, 512], default: 128}
 - id: awq
   name: Activation-aware Weight Quantization
   arxiv_id: '2306.00978'
@@ -47,6 +52,11 @@
   maturity: 5
   notes: Protects salient weight channels using activation magnitudes; typically beats
     GPTQ at 4-bit for quality.
+  hyperparameters_default:
+    group_size: {values: [32, 64, 128, -1], default: 128}
+    zero_point: {values: [true, false], default: true}
+    n_calib_samples: {values: [128, 256, 512], default: 128}
+    version: {values: [GEMM, GEMV], default: GEMM}
 - id: smoothquant
   name: SmoothQuant
   arxiv_id: '2211.10438'
@@ -68,6 +78,9 @@
   maturity: 4
   notes: Migrates quantization difficulty from activations to weights via per-channel
     scaling. Enables W8A8.
+  hyperparameters_default:
+    alpha: {values: [0.5, 0.6, 0.7, 0.8, 0.9], default: 0.5}
+    n_calib_samples: {values: [128, 256, 512], default: 256}
 - id: quip_sharp
   name: QuIP#
   arxiv_id: '2402.04396'
@@ -149,6 +162,10 @@
   maturity: 5
   notes: 4-bit NormalFloat data type + double quantization. Standard for QLoRA fine-tuning
     and fast inference.
+  hyperparameters_default:
+    quant_type: {values: [nf4, fp4], default: nf4}
+    double_quant: {values: [true, false], default: true}
+    compute_dtype: {values: [bfloat16, float16], default: bfloat16}
 - id: fp8
   name: FP8 (E4M3/E5M2)
   arxiv_id: '2209.05433'
@@ -172,6 +189,10 @@
   speedup: 4
   maturity: 4
   notes: Native FP8 on Hopper/Ada. Near-lossless at full activation+weight quantization.
+  hyperparameters_default:
+    weight_format: {values: [e4m3, e5m2], default: e4m3}
+    activation_format: {values: [e4m3, e5m2, dynamic], default: e4m3}
+    kv_cache_dtype: {values: [fp8, fp16, none], default: fp8}
 - id: omniquant
   name: OmniQuant
   arxiv_id: '2308.13137'

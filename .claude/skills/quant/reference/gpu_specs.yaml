@@ -1,18 +1,22 @@
-# NVIDIA GPU family -> compute capability + arch name.
+# NVIDIA GPU family -> compute capability + arch + perf specs.
 # Keyed by the `gpu` string used in aws_instances.yaml.
-# Source: NVIDIA CUDA docs (developer.nvidia.com/cuda-gpus).
+# Source: NVIDIA datasheets (developer.nvidia.com/cuda-gpus + per-product spec PDFs).
+# Perf fields are dense (non-sparse) tensor-core throughput where applicable.
+#   memory_bandwidth_gb_s : per-GPU HBM/GDDR bandwidth
+#   peak_fp16_tflops      : tensor-core fp16/bf16 dense throughput
+#   int8_tops             : tensor-core int8 dense throughput (0 if pre-Turing)
 
-K80:        {compute_capability: 3.7, gpu_arch: Kepler}
-M60:        {compute_capability: 5.2, gpu_arch: Maxwell}
-V100:       {compute_capability: 7.0, gpu_arch: Volta}
-V100-32GB:  {compute_capability: 7.0, gpu_arch: Volta}
-T4:         {compute_capability: 7.5, gpu_arch: Turing}
-T4g:        {compute_capability: 7.5, gpu_arch: Turing}
-A10G:       {compute_capability: 8.6, gpu_arch: Ampere}
-A100-40GB:  {compute_capability: 8.0, gpu_arch: Ampere}
-A100-80GB:  {compute_capability: 8.0, gpu_arch: Ampere}
-L4:         {compute_capability: 8.9, gpu_arch: Ada}
-L40S:       {compute_capability: 8.9, gpu_arch: Ada}
-H100:       {compute_capability: 9.0, gpu_arch: Hopper}
-H200:       {compute_capability: 9.0, gpu_arch: Hopper}
-B200:       {compute_capability: 10.0, gpu_arch: Blackwell}
+K80:        {compute_capability: 3.7, gpu_arch: Kepler,    memory_bandwidth_gb_s: 480,  peak_fp16_tflops: 4,    int8_tops: 0}
+M60:        {compute_capability: 5.2, gpu_arch: Maxwell,   memory_bandwidth_gb_s: 320,  peak_fp16_tflops: 9.6,  int8_tops: 0}
+V100:       {compute_capability: 7.0, gpu_arch: Volta,     memory_bandwidth_gb_s: 900,  peak_fp16_tflops: 125,  int8_tops: 62}
+V100-32GB:  {compute_capability: 7.0, gpu_arch: Volta,     memory_bandwidth_gb_s: 900,  peak_fp16_tflops: 125,  int8_tops: 62}
+T4:         {compute_capability: 7.5, gpu_arch: Turing,    memory_bandwidth_gb_s: 320,  peak_fp16_tflops: 65,   int8_tops: 130}
+T4g:        {compute_capability: 7.5, gpu_arch: Turing,    memory_bandwidth_gb_s: 320,  peak_fp16_tflops: 65,   int8_tops: 130}
+A10G:       {compute_capability: 8.6, gpu_arch: Ampere,    memory_bandwidth_gb_s: 600,  peak_fp16_tflops: 125,  int8_tops: 250}
+A100-40GB:  {compute_capability: 8.0, gpu_arch: Ampere,    memory_bandwidth_gb_s: 1555, peak_fp16_tflops: 312,  int8_tops: 624}
+A100-80GB:  {compute_capability: 8.0, gpu_arch: Ampere,    memory_bandwidth_gb_s: 2039, peak_fp16_tflops: 312,  int8_tops: 624}
+L4:         {compute_capability: 8.9, gpu_arch: Ada,       memory_bandwidth_gb_s: 300,  peak_fp16_tflops: 121,  int8_tops: 242}
+L40S:       {compute_capability: 8.9, gpu_arch: Ada,       memory_bandwidth_gb_s: 864,  peak_fp16_tflops: 362,  int8_tops: 733}
+H100:       {compute_capability: 9.0, gpu_arch: Hopper,    memory_bandwidth_gb_s: 3350, peak_fp16_tflops: 989,  int8_tops: 1979}
+H200:       {compute_capability: 9.0, gpu_arch: Hopper,    memory_bandwidth_gb_s: 4800, peak_fp16_tflops: 989,  int8_tops: 1979}
+B200:       {compute_capability: 10.0, gpu_arch: Blackwell, memory_bandwidth_gb_s: 8000, peak_fp16_tflops: 2200, int8_tops: 4500}

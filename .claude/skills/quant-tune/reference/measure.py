@@ -91,10 +91,14 @@ def main() -> int:
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA GPU required for measurement")
 
+    # Off by default: trust_remote_code=True executes the model repo's arbitrary code.
+    # Opt in per-run via MEASURE_TRUST_REMOTE_CODE=1 for models you trust.
+    trust = os.environ.get("MEASURE_TRUST_REMOTE_CODE") == "1"
+
     torch.cuda.reset_peak_memory_stats()
-    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=trust)
     model = AutoModelForCausalLM.from_pretrained(
-        model_path, trust_remote_code=True, device_map="cuda", torch_dtype="auto",
+        model_path, trust_remote_code=trust, device_map="cuda", torch_dtype="auto",
     )
     model.eval()
 

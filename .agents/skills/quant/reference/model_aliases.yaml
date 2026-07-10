@@ -1,0 +1,53 @@
+# Fuzzy model name -> canonical HuggingFace model id.
+#
+# Keys are normalized (lowercase, punctuation stripped) and matched after the
+# same normalization is applied to the user's input. Multiple aliases may map
+# to the same canonical id.
+#
+# Extend freely; no code change needed. model_alias.resolve() falls back to
+# HfApi.list_models search if no alias matches.
+
+# Llama family
+"llama 2 7b": meta-llama/Llama-2-7b-hf
+"llama2 7b": meta-llama/Llama-2-7b-hf
+"llama-2 7b": meta-llama/Llama-2-7b-hf
+"llama 2 13b": meta-llama/Llama-2-13b-hf
+"llama 2 70b": meta-llama/Llama-2-70b-hf
+"llama 3 8b": meta-llama/Meta-Llama-3-8B
+"llama3 8b": meta-llama/Meta-Llama-3-8B
+"llama 3 70b": meta-llama/Meta-Llama-3-70B
+"llama 3.1 8b": meta-llama/Llama-3.1-8B
+"llama 3.1 70b": meta-llama/Llama-3.1-70B
+"llama 3.2 1b": meta-llama/Llama-3.2-1B
+"llama 3.2 3b": meta-llama/Llama-3.2-3B
+"llama 3.3 70b": meta-llama/Llama-3.3-70B-Instruct
+
+# Mistral / Mixtral
+"mistral 7b": mistralai/Mistral-7B-v0.3
+"mistral 7b v0.3": mistralai/Mistral-7B-v0.3
+"mistral 7b instruct": mistralai/Mistral-7B-Instruct-v0.3
+"mixtral 8x7b": mistralai/Mixtral-8x7B-v0.1
+"mixtral 8x22b": mistralai/Mixtral-8x22B-v0.1
+
+# Qwen
+"qwen 2.5 7b": Qwen/Qwen2.5-7B
+"qwen2.5 7b": Qwen/Qwen2.5-7B
+"qwen 2.5 14b": Qwen/Qwen2.5-14B
+"qwen 2.5 32b": Qwen/Qwen2.5-32B
+"qwen 2.5 72b": Qwen/Qwen2.5-72B
+
+# Gemma
+"gemma 2 2b": google/gemma-2-2b
+"gemma 2 9b": google/gemma-2-9b
+"gemma 2 27b": google/gemma-2-27b
+
+# Phi
+"phi 3 mini": microsoft/Phi-3-mini-4k-instruct
+"phi-3 mini": microsoft/Phi-3-mini-4k-instruct
+"phi 3 medium": microsoft/Phi-3-medium-4k-instruct
+"phi 3.5 mini": microsoft/Phi-3.5-mini-instruct
+
+# Falcon
+"falcon 7b": tiiuae/falcon-7b
+"falcon 40b": tiiuae/falcon-40b
+"falcon 180b": tiiuae/falcon-180B

@@ -29,6 +29,8 @@ from pathlib import Path
 from contextlib import contextmanager
 
 from .config import REPO_ROOT, child_env, load_settings, require_host_execution
+from .execution_policy import ExecutionMode, ExecutionPolicy
+from .reproducibility import build_manifest, write_manifest_atomic
 
 JOBS_ROOT = REPO_ROOT / "jobs"
 VENV_ROOT = REPO_ROOT / ".venvs"
@@ -60,6 +62,8 @@ class JobMeta:
     metrics: dict | None = None
     terminal_reason: str | None = None
     termination_confirmed: bool | None = None
+    manifest_path: str | None = None
+    execution_mode: str = "host"
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), indent=2)
@@ -145,11 +149,14 @@ def launch(
     fix_note: str | None = None,
     tune_iter: int = 0,
     hyperparameters: dict | None = None,
+    execution_policy: ExecutionPolicy | None = None,
 ) -> JobMeta:
     """Spawn the quantization script in its method venv, detached from the agent."""
-    require_host_execution("quantization launch")
+    policy = execution_policy or ExecutionPolicy.host()
+    if policy.mode is ExecutionMode.HOST:
+        require_host_execution("quantization launch")
     py = venv_python(method_id)
-    if not py.exists():
+    if policy.mode is ExecutionMode.HOST and not py.exists():
         raise RuntimeError(
             f"Venv python not found at {py}. The Adapt agent should have built it via "
             f"install_method_venv before reaching this point."
@@ -162,6 +169,30 @@ def launch(
     script_path = job_dir / "script.py"
     script_path.write_text(script_code)
 
+    command_argv = policy.command_argv(
+        host_python=py,
+        script_path=script_path,
+        job_dir=job_dir,
+        output_dir=output_dir,
+        repo_root=REPO_ROOT,
+        job_id=job_id,
+        method_id=method_id,
+        model_id=model_id,
+    )
+
+    started_at = datetime.now(timezone.utc).isoformat()
+    manifest = build_manifest(
+        method_id=method_id,
+        model_id=model_id,
+        script_code=script_code,
+        output_dir=output_dir,
+        execution_mode=policy.mode.value,
+        method_repo_dir=VENV_ROOT / method_id / "repo",
+        created_at=started_at,
+        execution_command=command_argv,
+    )
+    manifest_path = write_manifest_atomic(manifest, job_dir)
+
     stdout = (job_dir / "stdout.log").open("wb")
     stderr = (job_dir / "stderr.log").open("wb")
     exit_sentinel = job_dir / "exit_code"
@@ -169,21 +200,23 @@ def launch(
     # wrapper records the real exit code so status is known even after the
     # child process has been reaped. Paths go through shlex.quote so method_id
     # or job_id values never cross into shell-interpreted territory.
-    wrapper = (
-        f"{shlex.quote(str(py))} {shlex.quote(str(script_path))}; "
-        f"echo $? > {shlex.quote(str(exit_sentinel))}"
-    )
-    proc = subprocess.Popen(
-        ["bash", "-c", wrapper],
-        stdout=stdout,
-        stderr=stderr,
-        stdin=subprocess.DEVNULL,
-        cwd=str(REPO_ROOT),
-        start_new_session=True,  # setsid: survives SSH disconnect (SIGHUP)
-        # Minimal allowlisted env: the LLM-authored quantization script must never
-        # inherit the parent's cloud secrets (see config.child_env). HF token only.
-        env=child_env(include_hf=True),
-    )
+    quoted_command = " ".join(shlex.quote(arg) for arg in command_argv)
+    wrapper = f"{quoted_command}; echo $? > {shlex.quote(str(exit_sentinel))}"
+    try:
+        proc = subprocess.Popen(
+            ["bash", "-c", wrapper],
+            stdout=stdout,
+            stderr=stderr,
+            stdin=subprocess.DEVNULL,
+            cwd=str(REPO_ROOT),
+            start_new_session=True,  # setsid: survives SSH disconnect (SIGHUP)
+            # Minimal allowlisted env: the generated script/container launcher must
+            # never inherit the parent's cloud secrets. HF model access is opt-in.
+            env=child_env(include_hf=True),
+        )
+    finally:
+        stdout.close()
+        stderr.close()
 
     # With start_new_session the child leads its own process group (pgid == pid).
     # Recording it lets us detect PID reuse later before signaling.
@@ -200,13 +233,15 @@ def launch(
         script_path=str(script_path),
         output_dir=output_dir,
         pid=proc.pid,
-        started_at=datetime.now(timezone.utc).isoformat(),
+        started_at=started_at,
         pgid=pgid,
         parent_job_id=parent_job_id,
         attempt=attempt,
         fix_note=fix_note,
         tune_iter=tune_iter,
         hyperparameters=hyperparameters,
+        manifest_path=str(manifest_path),
+        execution_mode=policy.mode.value,
     )
     write_meta(meta)
     return meta

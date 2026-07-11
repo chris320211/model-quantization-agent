@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from dataclasses import asdict
+from pathlib import Path
+
+import pytest
 
 from quant_agent.executor import JobMeta
 
@@ -44,6 +48,8 @@ def test_jobmeta_defaults_are_backwards_compatible():
     assert meta.attempt == 1
     assert meta.status == "running"
     assert meta.fix_note is None
+    assert meta.manifest_path is None
+    assert meta.execution_mode == "host"
 
 
 def test_jobmeta_fix_note_round_trip():
@@ -204,3 +210,183 @@ def test_edit_script_cannot_change_tune_locked_block(tmp_path, monkeypatch):
     assert result["status"] == "error"
     assert "TUNE-LOCKED" in result["error"]
     assert "group_size=128" in script.read_text()
+
+
+def test_container_command_plan_renders_without_shell_interpolation():
+    from quant_agent.execution_policy import ContainerCommandPlan, ExecutionPolicy
+
+    policy = ExecutionPolicy.containerized(
+        ContainerCommandPlan(
+            ("docker", "run", "--rm", "-v", "{job_dir}:/job", "image", "python", "/job/script.py")
+        )
+    )
+    argv = policy.command_argv(
+        host_python=Path("/unused/python"),
+        script_path=Path("/tmp/job with spaces/script.py"),
+        job_dir=Path("/tmp/job with spaces"),
+        output_dir="/tmp/output",
+        repo_root=Path("/workspace"),
+        job_id="id",
+        method_id="awq",
+        model_id="org/model",
+    )
+    assert argv[4] == "/tmp/job with spaces:/job"
+    assert argv[-2:] == ["python", "/job/script.py"]
+
+
+def test_execution_policy_rejects_incomplete_or_malformed_container_plan():
+    from quant_agent.execution_policy import ContainerCommandPlan, ExecutionMode, ExecutionPolicy
+
+    with pytest.raises(ValueError, match="requires a container command"):
+        ExecutionPolicy(mode=ExecutionMode.CONTAINER)
+    with pytest.raises(ValueError, match="unsupported container runtime"):
+        ContainerCommandPlan(("bash", "-c", "python script.py"))
+    with pytest.raises(ValueError, match="credential environment names"):
+        ContainerCommandPlan(("docker", "run", "--env=HF_TOKEN=secret-value", "image"))
+    plan = ContainerCommandPlan(("docker", "{unknown}"))
+    with pytest.raises(ValueError, match="placeholder"):
+        plan.render({key: "x" for key in (
+            "job_dir", "script_path", "output_dir", "repo_root", "job_id", "method_id", "model_id"
+        )})
+
+
+def test_build_manifest_collects_required_reproducibility_fields(tmp_path, monkeypatch):
+    from quant_agent import reproducibility
+
+    monkeypatch.setattr(reproducibility, "_runtime_versions", lambda: {"torch": "2.test"})
+    monkeypatch.setattr(
+        reproducibility,
+        "_gpu_cuda_info",
+        lambda: {"gpus": [{"name": "Test GPU"}], "cuda_toolkit": "12.test"},
+    )
+    monkeypatch.setattr(reproducibility, "_method_repo_commit", lambda path: "b" * 40)
+    manifest = reproducibility.build_manifest(
+        method_id="awq",
+        model_id="org/model",
+        script_code="pass\n",
+        output_dir="/output",
+        execution_mode="container",
+        method_repo_dir=tmp_path / "repo",
+        created_at="2026-07-11T00:00:00+00:00",
+    )
+
+    payload = json.loads(manifest.to_json())
+    assert payload["schema_version"] == "1.0"
+    assert payload["created_at"] == "2026-07-11T00:00:00+00:00"
+    assert payload["script_sha256"] == hashlib.sha256(b"pass\n").hexdigest()
+    assert payload["runtime_versions"] == {"torch": "2.test"}
+    assert payload["gpu_cuda"]["cuda_toolkit"] == "12.test"
+    assert payload["method_repo_commit"] == "b" * 40
+    assert payload["execution_command"] == []
+    assert payload["python"]["version"]
+    assert payload["platform"]["system"]
+
+
+def test_launch_writes_reproducibility_manifest(tmp_path, monkeypatch):
+    from quant_agent import executor
+    from quant_agent.reproducibility import ReproducibilityManifest
+
+    jobs = tmp_path / "jobs"
+    venvs = tmp_path / ".venvs"
+    python = venvs / "awq" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.write_text("")
+    monkeypatch.setattr(executor, "JOBS_ROOT", jobs)
+    monkeypatch.setattr(executor, "VENV_ROOT", venvs)
+    monkeypatch.setattr(executor, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(executor, "_new_job_id", lambda: "20260101T000000Z-abc123")
+
+    class Proc:
+        pid = 43210
+
+    monkeypatch.setattr(executor.subprocess, "Popen", lambda *args, **kwargs: Proc())
+    monkeypatch.setattr(executor.os, "getpgid", lambda pid: pid)
+    monkeypatch.setattr(
+        executor,
+        "build_manifest",
+        lambda **kwargs: ReproducibilityManifest(
+            schema_version="1.0",
+            created_at=kwargs["created_at"],
+            model_id=kwargs["model_id"],
+            method_id=kwargs["method_id"],
+            script_sha256=hashlib.sha256(kwargs["script_code"].encode()).hexdigest(),
+            output_dir=kwargs["output_dir"],
+            execution_mode=kwargs["execution_mode"],
+            python={"version": "3.test"},
+            platform={"system": "test"},
+            runtime_versions={},
+            gpu_cuda={},
+            method_repo_commit=None,
+        ),
+    )
+
+    meta = executor.launch("awq", "org/model", "print('ok')\n", "/tmp/out")
+    manifest_path = jobs / meta.job_id / "reproducibility.json"
+    payload = json.loads(manifest_path.read_text())
+    assert meta.manifest_path == str(manifest_path)
+    assert meta.execution_mode == "host"
+    assert payload["model_id"] == "org/model"
+    assert payload["method_id"] == "awq"
+    assert payload["output_dir"] == "/tmp/out"
+    assert payload["execution_mode"] == "host"
+    assert payload["script_sha256"] == hashlib.sha256(b"print('ok')\n").hexdigest()
+    assert not list(manifest_path.parent.glob(".reproducibility.json.*.tmp"))
+
+
+def test_container_launch_uses_plan_without_host_venv_or_acknowledgement(tmp_path, monkeypatch):
+    from quant_agent import executor
+    from quant_agent.config import host_execution_policy
+    from quant_agent.execution_policy import ContainerCommandPlan, ExecutionPolicy
+    from quant_agent.reproducibility import ReproducibilityManifest
+
+    monkeypatch.setattr(executor, "JOBS_ROOT", tmp_path / "jobs")
+    monkeypatch.setattr(executor, "VENV_ROOT", tmp_path / "missing-venvs")
+    monkeypatch.setattr(executor, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(executor, "_new_job_id", lambda: "20260101T000000Z-abc124")
+    captured = {}
+
+    class Proc:
+        pid = 43211
+
+    def fake_popen(args, **kwargs):
+        captured["args"] = args
+        return Proc()
+
+    monkeypatch.setattr(executor.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(executor.os, "getpgid", lambda pid: pid)
+    monkeypatch.setattr(
+        executor,
+        "build_manifest",
+        lambda **kwargs: ReproducibilityManifest(
+            schema_version="1.0", created_at=kwargs["created_at"], model_id=kwargs["model_id"],
+            method_id=kwargs["method_id"], script_sha256="a" * 64,
+            output_dir=kwargs["output_dir"], execution_mode=kwargs["execution_mode"],
+            python={}, platform={}, runtime_versions={}, gpu_cuda={}, method_repo_commit=None,
+        ),
+    )
+    policy = ExecutionPolicy.containerized(
+        ContainerCommandPlan(("podman", "run", "--rm", "image", "python", "/job/script.py"))
+    )
+    with host_execution_policy(False):
+        meta = executor.launch("awq", "org/model", "pass\n", "/tmp/out", execution_policy=policy)
+
+    assert meta.execution_mode == "container"
+    assert "podman run --rm image python /job/script.py" in captured["args"][2]
+
+
+def test_relaunch_refuses_to_downgrade_container_job_to_host(tmp_path, monkeypatch):
+    from quant_agent import executor
+    from quant_agent.tools.executor_tools import relaunch_job
+
+    parent = JobMeta(
+        job_id="20260711T000000Z-abcdef", method_id="awq", model_id="org/model",
+        venv="awq", script_path=str(tmp_path / "script.py"), output_dir="/out",
+        pid=1, started_at="now", status="failed", execution_mode="container",
+    )
+    (tmp_path / "script.py").write_text("pass\n")
+    monkeypatch.setattr(executor, "refresh_status", lambda _: parent)
+    payload = json.loads(relaunch_job.invoke({
+        "job_id": parent.job_id, "fix_description": "test",
+    }))
+    assert payload["status"] == "error"
+    assert "refusing to downgrade" in payload["error"]

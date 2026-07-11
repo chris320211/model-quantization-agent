@@ -46,6 +46,8 @@ def execute_quantization(
             "model_id": meta.model_id,
             "output_dir": meta.output_dir,
             "script_path": meta.script_path,
+            "manifest_path": meta.manifest_path,
+            "execution_mode": meta.execution_mode,
             "message": (
                 f"Job {meta.job_id} started. Use check_job('{meta.job_id}') to poll, "
                 f"tail_job_logs('{meta.job_id}') for logs."
@@ -234,6 +236,14 @@ def relaunch_job(job_id: str, fix_description: str) -> str:
         )
 
     script_code = script_path.read_text()
+    if parent.execution_mode != "host":
+        return json.dumps({
+            "status": "error",
+            "error": (
+                "containerized jobs require the caller to supply the original trusted "
+                "ExecutionPolicy when relaunching; refusing to downgrade to host execution"
+            ),
+        })
     try:
         meta = executor.launch(
             method_id=parent.method_id,

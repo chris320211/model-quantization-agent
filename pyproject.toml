@@ -18,14 +18,18 @@ dependencies = [
     "pyyaml>=6",
     "requests>=2.31",
     "python-dotenv>=1",
+    "pydantic>=2.10,<3",
     "typer>=0.12",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-mock>=3.12"]
+dev = ["pytest>=8,<10", "build>=1.2"]
 
 [project.scripts]
 quant-agent = "quant_agent.cli:app"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+quant_agent = ["data/*.yaml"]

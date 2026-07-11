@@ -8,11 +8,11 @@ from functools import lru_cache
 import yaml
 from huggingface_hub import HfApi
 
-from ..config import REPO_ROOT, load_settings
+from ..config import DATA_ROOT, load_settings
 
 log = logging.getLogger(__name__)
 
-_ALIAS_PATH = REPO_ROOT / "seed" / "model_aliases.yaml"
+_ALIAS_PATH = DATA_ROOT / "model_aliases.yaml"
 
 
 @dataclass
@@ -55,7 +55,7 @@ def resolve(name: str) -> ResolveResult:
 
     Order of preference:
       1. Exact ``org/repo`` form → pass through (user already gave a canonical id).
-      2. Exact (normalized) alias hit in seed/model_aliases.yaml.
+      2. Exact (normalized) alias hit in the packaged alias catalog.
       3. HfApi.list_models(search=name) — returns up to 3 candidates for the user to pick.
       4. Unresolved — empty candidates list.
     """

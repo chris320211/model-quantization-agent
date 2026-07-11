@@ -8,7 +8,7 @@ import yaml
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
-from ..config import load_settings
+from ..config import DATA_ROOT
 
 
 # VRAM overhead assumed for activations, KV cache, CUDA workspace, etc.
@@ -33,8 +33,7 @@ class Constraints(BaseModel):
 
 @lru_cache(maxsize=1)
 def load_catalog() -> list[dict]:
-    s = load_settings()
-    with s.seed_path.open() as f:
+    with (DATA_ROOT / "methods.yaml").open() as f:
         return yaml.safe_load(f)
 
 

@@ -5,10 +5,10 @@ from functools import lru_cache
 
 import yaml
 
-from ..config import REPO_ROOT
+from ..config import DATA_ROOT
 
-_PATH = REPO_ROOT / "seed" / "aws_instances.yaml"
-_GPU_PATH = REPO_ROOT / "seed" / "gpu_specs.yaml"
+_PATH = DATA_ROOT / "aws_instances.yaml"
+_GPU_PATH = DATA_ROOT / "gpu_specs.yaml"
 
 
 @dataclass(frozen=True)
@@ -47,7 +47,7 @@ def _load_gpu_specs() -> dict[str, dict]:
 def lookup(instance_type: str) -> InstanceSpec:
     """Resolve an AWS instance type (e.g. 'g5.xlarge') to its GPU spec.
 
-    Raises UnknownInstanceType if not in seed/aws_instances.yaml.
+    Raises UnknownInstanceType if not in the packaged AWS catalog.
     """
     data = _load()
     key = instance_type.strip().lower()

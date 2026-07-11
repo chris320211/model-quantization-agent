@@ -7,9 +7,15 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
+PACKAGE_ROOT = Path(__file__).resolve().parent
+DATA_ROOT = PACKAGE_ROOT / "data"
+_SOURCE_ROOT = PACKAGE_ROOT.parents[1]
+_DEFAULT_WORKSPACE = (
+    _SOURCE_ROOT
+    if (_SOURCE_ROOT / "pyproject.toml").exists()
+    else Path("~/.local/share/quant-agent").expanduser()
+)
+REPO_ROOT = Path(os.environ.get("QUANT_AGENT_WORKSPACE", _DEFAULT_WORKSPACE)).expanduser().resolve()
 
 
 @dataclass(frozen=True)
@@ -78,16 +84,19 @@ def child_env(extra: dict[str, str] | None = None, *, include_hf: bool = True) -
 
 @lru_cache(maxsize=1)
 def load_settings() -> Settings:
+    # Explicit, workspace-scoped loading avoids python-dotenv searching parent
+    # directories at import time. Environment variables still take precedence.
+    load_dotenv(REPO_ROOT / ".env")
     key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if not key or key.startswith("sk-ant-REPLACE"):
         raise RuntimeError(
-            "ANTHROPIC_API_KEY is not set. Copy .env.example to .env and fill it in."
+            "ANTHROPIC_API_KEY is not set. Run `quant-agent setup` or set it in the environment."
         )
 
     return Settings(
         anthropic_api_key=key,
         model=os.environ.get("QUANT_AGENT_MODEL", "claude-sonnet-4-6"),
-        seed_path=REPO_ROOT / "seed" / "methods.yaml",
+        seed_path=DATA_ROOT / "methods.yaml",
         output_dir=REPO_ROOT / "out",
         github_token=os.environ.get("GITHUB_TOKEN") or None,
         hf_token=os.environ.get("HUGGINGFACE_HUB_TOKEN") or None,

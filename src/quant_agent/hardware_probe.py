@@ -98,8 +98,8 @@ def probe_live(spec: InstanceSpec | None = None) -> HardwareProfile:
 
     if rows:
         first = rows[0]
-        vram_total_gb = first["memory_total_mib"] / 1024.0
-        vram_free_gb = first["memory_free_mib"] / 1024.0
+        vram_total_gb = sum(r["memory_total_mib"] for r in rows) / 1024.0
+        vram_free_gb = sum(r["memory_free_mib"] for r in rows) / 1024.0
         driver = first["driver_version"]
         ecc = first["ecc_mode"]
     else:

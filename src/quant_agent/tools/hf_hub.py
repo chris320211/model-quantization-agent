@@ -98,7 +98,9 @@ def hf_model_info(model_id: str) -> str:
     s = load_settings()
     api = HfApi(token=s.hf_token)
     try:
-        info = api.model_info(model_id)
+        # File sizes are omitted by default; request metadata so the safetensor
+        # sibling fallback can actually compute a parameter count.
+        info = api.model_info(model_id, files_metadata=True)
     except Exception as e:
         return json.dumps({"error": f"HF lookup failed: {e}", "model_id": model_id})
 

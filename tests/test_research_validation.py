@@ -102,3 +102,30 @@ def test_unknown_considered_id_raises():
             **_base_kwargs(),
         )
     assert "not in the catalog" in str(ei.value)
+
+
+@pytest.mark.parametrize("field,value,needle", [
+    ("repo_url", "https://github.com/attacker/fake", "non-catalog repo_url"),
+    ("bits", 999, "unsupported bits"),
+    ("quality_score", 0, "non-catalog quality_score"),
+])
+def test_finalist_fields_must_match_catalog(field, value, needle):
+    includes = {"awq", "gptq", "bnb_nf4"}
+    candidates = [_candidate(i) for i in sorted(includes)]
+    candidates[0] = candidates[0].model_copy(update={field: value})
+    with pytest.raises(Exception) as ei:
+        ResearchReport(
+            considered=_full_considered(includes), methods=candidates, **_base_kwargs()
+        )
+    assert needle in str(ei.value)
+
+
+def test_duplicate_finalists_rejected():
+    includes = {"awq", "gptq", "bnb_nf4"}
+    with pytest.raises(Exception) as ei:
+        ResearchReport(
+            considered=_full_considered(includes),
+            methods=[_candidate("awq"), _candidate("awq"), _candidate("gptq")],
+            **_base_kwargs(),
+        )
+    assert "duplicate finalist" in str(ei.value)

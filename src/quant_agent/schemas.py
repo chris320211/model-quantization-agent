@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 from typing import Any, Literal
+import math
 
 from pydantic import BaseModel, Field, model_validator
 
 
 class MethodCandidate(BaseModel):
-    id: str = Field(..., description="Catalog id from seed/methods.yaml, e.g. 'awq'.")
+    id: str = Field(..., description="Packaged catalog id, e.g. 'awq'.")
     name: str
     repo_url: str = Field(..., description="Canonical repo URL (methods.yaml repos[0]).")
-    bits: int = Field(..., description="Target weight bit width for this candidate.")
-    est_vram_gb: float = Field(..., description="Estimated weight-memory footprint in GB.")
+    bits: int = Field(..., gt=0, description="Target weight bit width for this candidate.")
+    est_vram_gb: float = Field(
+        ..., ge=0, allow_inf_nan=False, description="Estimated weight-memory footprint in GB."
+    )
     quality_score: int = Field(..., ge=0, le=5, description="Perplexity retention 0-5.")
     speed_score: int = Field(..., ge=0, le=5, description="Kernel-level speedup 0-5.")
     needs_calibration: bool
@@ -25,7 +28,7 @@ class MethodCandidate(BaseModel):
 
 class ConsideredMethod(BaseModel):
     """One row in the 34-way walk the Research agent performs over the catalog."""
-    id: str = Field(..., description="Catalog id from seed/methods.yaml.")
+    id: str = Field(..., description="Packaged catalog id.")
     verdict: Literal["include", "reject"]
     reason: str = Field(
         ...,
@@ -68,7 +71,9 @@ class ResearchReport(ResolvedInputs):
         # Local import to avoid schemas → tools → config → schemas cycles at import time.
         from .tools.recommender import load_catalog
 
-        catalog_ids = [m["id"] for m in load_catalog()]
+        catalog = load_catalog()
+        catalog_ids = [m["id"] for m in catalog]
+        catalog_by_id = {m["id"]: m for m in catalog}
         catalog_set = set(catalog_ids)
 
         considered_ids = [c.id for c in self.considered]
@@ -96,6 +101,53 @@ class ResearchReport(ResolvedInputs):
         not_in_catalog = [m.id for m in self.methods if m.id not in catalog_set]
         if not_in_catalog:
             problems.append(f"methods contain ids not in the catalog: {not_in_catalog}")
+
+        method_ids = [m.id for m in self.methods]
+        if len(method_ids) != len(set(method_ids)):
+            problems.append("methods contain duplicate finalist ids")
+
+        for candidate in self.methods:
+            entry = catalog_by_id.get(candidate.id)
+            if entry is None:
+                continue
+            canonical_repo = (entry.get("repos") or [None])[0]
+            expected = {
+                "name": entry.get("name"),
+                "repo_url": canonical_repo,
+                "quality_score": entry.get("quality", 0),
+                "speed_score": entry.get("speedup", 0),
+                "needs_calibration": bool(entry.get("needs_calibration", False)),
+            }
+            for field, value in expected.items():
+                if getattr(candidate, field) != value:
+                    problems.append(
+                        f"candidate {candidate.id!r} has non-catalog {field}: "
+                        f"{getattr(candidate, field)!r} != {value!r}"
+                    )
+            if candidate.bits not in (entry.get("bits") or []):
+                problems.append(
+                    f"candidate {candidate.id!r} uses unsupported bits={candidate.bits}"
+                )
+            if not math.isfinite(candidate.est_vram_gb):
+                problems.append(f"candidate {candidate.id!r} has non-finite est_vram_gb")
+            if self.params_b is not None:
+                expected_vram = self.params_b * candidate.bits / 8 * 1.4
+                if not math.isclose(candidate.est_vram_gb, expected_vram, abs_tol=0.05):
+                    problems.append(
+                        f"candidate {candidate.id!r} est_vram_gb={candidate.est_vram_gb:g} "
+                        f"does not match {expected_vram:g}"
+                    )
+            if candidate.hyperparameters is not None:
+                specs = entry.get("hyperparameters_default") or {}
+                for name, value in candidate.hyperparameters.items():
+                    if name not in specs:
+                        problems.append(
+                            f"candidate {candidate.id!r} has unknown hyperparameter {name!r}"
+                        )
+                    elif value not in specs[name].get("values", []):
+                        problems.append(
+                            f"candidate {candidate.id!r} has invalid {name}={value!r}"
+                        )
 
         if problems:
             raise ValueError("; ".join(problems))

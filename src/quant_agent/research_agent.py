@@ -35,6 +35,12 @@ _INSTANCE_RE = re.compile(
 class Parsed:
     model_phrase: str
     instance_phrase: str | None
+    target_bits: int | None = None
+    backend: str | None = None
+    priority: str | None = None
+    have_calibration_data: bool | None = None
+    allow_qat: bool = False
+    need_kv_cache_quant: bool = False
 
 
 def _parse_input(text: str) -> Parsed:
@@ -43,9 +49,39 @@ def _parse_input(text: str) -> Parsed:
     model_phrase = text
     if instance:
         model_phrase = _INSTANCE_RE.sub("", text).strip()
+    bit_match = re.search(r"\b([1-8])\s*[- ]?bit\b", model_phrase, re.I)
+    target_bits = int(bit_match.group(1)) if bit_match else None
+    if bit_match:
+        model_phrase = model_phrase[: bit_match.start()] + model_phrase[bit_match.end() :]
+    backend_match = re.search(
+        r"\b(vllm|transformers|tgi|llama[_ -]?cpp|tensorrt[_ -]?llm)\b",
+        model_phrase,
+        re.I,
+    )
+    backend = backend_match.group(1).lower().replace("-", "_").replace(" ", "_") if backend_match else None
+    if backend_match:
+        model_phrase = model_phrase[: backend_match.start()] + model_phrase[backend_match.end() :]
+    priority_match = re.search(r"\b(quality|speed|balanced)\s*(?:first|priority)?\b", model_phrase, re.I)
+    priority = priority_match.group(1).lower() if priority_match else None
+    if priority_match:
+        model_phrase = model_phrase[: priority_match.start()] + model_phrase[priority_match.end() :]
+    no_calibration = bool(re.search(r"\b(?:no calibration|calibration[- ]free)\b", model_phrase, re.I))
+    model_phrase = re.sub(r"\b(?:no calibration|calibration[- ]free)\b", " ", model_phrase, flags=re.I)
+    allow_qat = bool(re.search(r"\bqat\b", model_phrase, re.I))
+    need_kv = bool(re.search(r"\bkv[- ]?cache\b", model_phrase, re.I))
+    model_phrase = re.sub(r"\b(?:qat|kv[- ]?cache)\b", " ", model_phrase, flags=re.I)
     model_phrase = re.sub(r"\b(port|quantize|to|on|for|using)\b", " ", model_phrase, flags=re.I)
     model_phrase = re.sub(r"\s+", " ", model_phrase).strip()
-    return Parsed(model_phrase=model_phrase, instance_phrase=instance)
+    return Parsed(
+        model_phrase=model_phrase,
+        instance_phrase=instance,
+        target_bits=target_bits,
+        backend=backend,
+        priority=priority,
+        have_calibration_data=False if no_calibration else None,
+        allow_qat=allow_qat,
+        need_kv_cache_quant=need_kv,
+    )
 
 
 def _hf_info(model_id: str) -> dict:
@@ -94,6 +130,14 @@ Resolved inputs (authoritative — copy verbatim into the report):
 - peak_fp16_tflops: {peak_fp16_tflops}
 - int8_tops: {int8_tops}
 
+User constraints (authoritative when non-null):
+- target_bits: {target_bits}
+- backend: {backend}
+- priority: {priority}
+- have_calibration_data: {have_calibration_data}
+- allow_qat: {allow_qat}
+- need_kv_cache_quant: {need_kv_cache_quant}
+
 Hardware profile (live nvidia-smi merged with static specs; probe_ok=false means no GPU
 was visible at planning time and the live fields are null — treat with appropriate caveat):
 {hw_profile}
@@ -101,7 +145,7 @@ was visible at planning time and the live fields are null — treat with appropr
 HuggingFace model info (pay attention to `architectures`):
 {hf_info}
 
-Catalog (seed/methods.yaml, authoritative — ids, repo_urls, scores MUST come from here.
+Catalog (packaged methods.yaml, authoritative — ids, repo_urls, scores MUST come from here.
 The `hyperparameters_default` field, when present, lists tunable knobs and their valid
 values; use it to set the candidate's `hyperparameters` to a sensible starting config):
 {catalog}
@@ -180,6 +224,13 @@ def run(user_input: str) -> ResearchReport:
             instance_type = parsed.instance_phrase
 
     hw_profile = probe_live(spec)
+    if spec is None and hw_profile.probe_ok:
+        vram_gb = hw_profile.vram_gb_total
+        compute_capability = hw_profile.compute_capability
+        gpu_arch = hw_profile.gpu_arch
+        memory_bandwidth_gb_s = hw_profile.memory_bandwidth_gb_s
+        peak_fp16_tflops = hw_profile.peak_fp16_tflops
+        int8_tops = hw_profile.int8_tops
 
     info = _hf_info(model_id)
     params_b = info.get("params_b")
@@ -194,6 +245,12 @@ def run(user_input: str) -> ResearchReport:
         memory_bandwidth_gb_s=memory_bandwidth_gb_s,
         peak_fp16_tflops=peak_fp16_tflops,
         int8_tops=int8_tops,
+        target_bits=parsed.target_bits,
+        backend=parsed.backend,
+        priority=parsed.priority,
+        have_calibration_data=parsed.have_calibration_data,
+        allow_qat=parsed.allow_qat,
+        need_kv_cache_quant=parsed.need_kv_cache_quant,
         hw_profile=json.dumps(hw_profile.to_dict(), indent=2),
         hf_info=json.dumps(info, indent=2),
         catalog=_catalog_context(),

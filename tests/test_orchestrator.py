@@ -53,10 +53,10 @@ def _fixture_report() -> ResearchReport:
         methods=[
             MethodCandidate(
                 id="awq",
-                name="AWQ",
-                repo_url="https://github.com/casper-hansen/AutoAWQ",
+                name="Activation-aware Weight Quantization",
+                repo_url="https://github.com/mit-han-lab/llm-awq",
                 bits=4,
-                est_vram_gb=4.7,
+                est_vram_gb=4.718,
                 quality_score=5,
                 speed_score=4,
                 needs_calibration=True,
@@ -65,9 +65,9 @@ def _fixture_report() -> ResearchReport:
             MethodCandidate(
                 id="gptq",
                 name="GPTQ",
-                repo_url="https://github.com/ModelCloud/GPTQModel",
+                repo_url="https://github.com/IST-DASLab/gptq",
                 bits=4,
-                est_vram_gb=4.7,
+                est_vram_gb=4.718,
                 quality_score=4,
                 speed_score=4,
                 needs_calibration=True,
@@ -78,7 +78,7 @@ def _fixture_report() -> ResearchReport:
                 name="bitsandbytes NF4 (QLoRA)",
                 repo_url="https://github.com/bitsandbytes-foundation/bitsandbytes",
                 bits=4,
-                est_vram_gb=4.9,
+                est_vram_gb=4.718,
                 quality_score=4,
                 speed_score=3,
                 needs_calibration=False,
@@ -101,7 +101,7 @@ def test_format_report_includes_methods_and_tradeoffs():
     assert "[INCLUDE]" in out
     assert "[reject " in out
     assert "fp8" in out
-    assert "1. AWQ" in out
+    assert "1. Activation-aware Weight Quantization" in out
     assert "2. GPTQ" in out
     assert "bnb_nf4" in out
     assert "Tradeoffs:" in out

@@ -27,6 +27,7 @@ from .config import load_settings
 from .schemas import MethodCandidate
 from .tools import github_readme
 from .tools.recommender import load_catalog
+from .io_utils import atomic_write_text
 
 log = logging.getLogger(__name__)
 
@@ -66,9 +67,7 @@ def _load_global_cache() -> dict[str, dict]:
 
 def _save_global_cache(cache: dict[str, dict]) -> None:
     try:
-        _GLOBAL_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with _GLOBAL_CACHE_PATH.open("w") as f:
-            yaml.safe_dump(cache, f, sort_keys=True)
+        atomic_write_text(_GLOBAL_CACHE_PATH, yaml.safe_dump(cache, sort_keys=True))
     except OSError as e:
         log.warning("hyperparam cache write failed: %s", e)
 
@@ -77,12 +76,29 @@ def _cache_key(method_id: str, commit_sha: str | None) -> str:
     return f"{method_id}@{commit_sha or 'unknown'}"
 
 
+def _local_repo_commit(method_id: str) -> str | None:
+    from .config import REPO_ROOT
+    import subprocess
+
+    repo = REPO_ROOT / ".venvs" / method_id / "repo"
+    if not (repo / ".git").exists():
+        return None
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=10, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
 # ---------------------------------------------------------------------------
 # Catalog defaults (tier-1 source)
 
 
 def _catalog_defaults(method_id: str) -> HyperparamRanges | None:
-    """Convert seed/methods.yaml `hyperparameters_default` block into HyperparamRanges."""
+    """Convert the packaged catalog's defaults into HyperparamRanges."""
     for m in load_catalog():
         if m["id"] != method_id:
             continue
@@ -205,7 +221,7 @@ def infer_ranges(
 
     # Tier 2: global cache
     cache = _load_global_cache()
-    key = _cache_key(method.id, repo_commit_sha)
+    key = _cache_key(method.id, repo_commit_sha or _local_repo_commit(method.id))
     if key in cache:
         try:
             cached = HyperparamRanges(**cache[key])
@@ -253,8 +269,9 @@ def _persist_per_job(ranges: HyperparamRanges, job_dir: Path | None) -> None:
         return
     try:
         job_dir.mkdir(parents=True, exist_ok=True)
-        (job_dir / "hyperparams.yaml").write_text(
-            yaml.safe_dump(ranges.model_dump(), sort_keys=False)
+        atomic_write_text(
+            job_dir / "hyperparams.yaml",
+            yaml.safe_dump(ranges.model_dump(), sort_keys=False),
         )
     except OSError as e:
         log.warning("per-job hyperparam persist failed: %s", e)

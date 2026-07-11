@@ -18,13 +18,34 @@ from pathlib import Path
 import requests
 
 from ..config import REPO_ROOT
+from ..io_utils import atomic_write_text
 
 log = logging.getLogger(__name__)
 
 _CACHE_DIR = REPO_ROOT / ".cache" / "papers"
 _HTTP_TIMEOUT = 60
 _DEFAULT_MAX_CHARS = 16_000
+_MAX_HTTP_BYTES = 50 * 1024 * 1024
 _UA = {"User-Agent": "quant-agent/0.1 (+https://github.com/)"}
+
+
+def _limited_response(url: str) -> tuple[int, bytes] | None:
+    try:
+        with requests.get(url, timeout=_HTTP_TIMEOUT, headers=_UA, stream=True) as response:
+            chunks: list[bytes] = []
+            total = 0
+            for chunk in response.iter_content(chunk_size=64 * 1024):
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if total > _MAX_HTTP_BYTES:
+                    log.warning("response too large for %s", url)
+                    return None
+                chunks.append(chunk)
+            return response.status_code, b"".join(chunks)
+    except requests.RequestException as e:
+        log.warning("fetch failed for %s: %s", url, e)
+        return None
 
 
 def _cache_path(arxiv_id: str) -> Path:
@@ -47,30 +68,29 @@ def _strip_html(html: str) -> str:
 
 def _fetch_ar5iv(arxiv_id: str) -> str | None:
     url = f"https://ar5iv.org/abs/{arxiv_id}"
-    try:
-        r = requests.get(url, timeout=_HTTP_TIMEOUT, headers=_UA)
-    except requests.RequestException as e:  # noqa: BLE001
-        log.warning("ar5iv fetch failed for %s: %s", arxiv_id, e)
+    result = _limited_response(url)
+    if result is None:
         return None
-    if r.status_code == 200 and "<html" in r.text.lower():
-        return _strip_html(r.text) or None
+    status, body = result
+    text = body.decode("utf-8", errors="replace")
+    if status == 200 and "<html" in text.lower():
+        return _strip_html(text) or None
     return None
 
 
 def _fetch_pdf_text(arxiv_id: str) -> str | None:
     url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
-    try:
-        r = requests.get(url, timeout=_HTTP_TIMEOUT, headers=_UA)
-    except requests.RequestException as e:  # noqa: BLE001
-        log.warning("arXiv PDF fetch failed for %s: %s", arxiv_id, e)
+    result = _limited_response(url)
+    if result is None:
         return None
-    if r.status_code != 200:
-        log.warning("arXiv PDF %s: HTTP %s", arxiv_id, r.status_code)
+    status, body = result
+    if status != 200:
+        log.warning("arXiv PDF %s: HTTP %s", arxiv_id, status)
         return None
     try:
         import pypdf
 
-        reader = pypdf.PdfReader(io.BytesIO(r.content))
+        reader = pypdf.PdfReader(io.BytesIO(body))
         text = "\n".join(page.extract_text() or "" for page in reader.pages)
         return text.strip() or None
     except Exception as e:  # noqa: BLE001 — pypdf raises a zoo of errors on odd PDFs
@@ -85,8 +105,7 @@ def fetch_paper_text(arxiv_id: str, *, use_cache: bool = True) -> str | None:
         return cache.read_text(errors="replace")
     text = _fetch_ar5iv(arxiv_id) or _fetch_pdf_text(arxiv_id)
     if text:
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        cache.write_text(text)
+        atomic_write_text(cache, text)
     return text
 
 

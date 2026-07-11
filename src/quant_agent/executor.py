@@ -15,6 +15,7 @@ Layout:
 from __future__ import annotations
 
 import json
+import fcntl
 import os
 import re
 import secrets
@@ -25,8 +26,9 @@ import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from contextlib import contextmanager
 
-from .config import REPO_ROOT, child_env, load_settings
+from .config import REPO_ROOT, child_env, load_settings, require_host_execution
 
 JOBS_ROOT = REPO_ROOT / "jobs"
 VENV_ROOT = REPO_ROOT / ".venvs"
@@ -56,6 +58,8 @@ class JobMeta:
     tune_iter: int = 0
     hyperparameters: dict | None = None
     metrics: dict | None = None
+    terminal_reason: str | None = None
+    termination_confirmed: bool | None = None
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), indent=2)
@@ -83,6 +87,12 @@ def _require_valid_job_id(job_id: str) -> None:
 
 
 def _pid_alive(pid: int) -> bool:
+    try:
+        waited, _ = os.waitpid(pid, os.WNOHANG)
+        if waited == pid:
+            return False
+    except ChildProcessError:
+        pass
     try:
         os.kill(pid, 0)
         return True
@@ -133,8 +143,11 @@ def launch(
     parent_job_id: str | None = None,
     attempt: int = 1,
     fix_note: str | None = None,
+    tune_iter: int = 0,
+    hyperparameters: dict | None = None,
 ) -> JobMeta:
     """Spawn the quantization script in its method venv, detached from the agent."""
+    require_host_execution("quantization launch")
     py = venv_python(method_id)
     if not py.exists():
         raise RuntimeError(
@@ -169,7 +182,7 @@ def launch(
         start_new_session=True,  # setsid: survives SSH disconnect (SIGHUP)
         # Minimal allowlisted env: the LLM-authored quantization script must never
         # inherit the parent's cloud secrets (see config.child_env). HF token only.
-        env=child_env(),
+        env=child_env(include_hf=True),
     )
 
     # With start_new_session the child leads its own process group (pgid == pid).
@@ -192,8 +205,10 @@ def launch(
         parent_job_id=parent_job_id,
         attempt=attempt,
         fix_note=fix_note,
+        tune_iter=tune_iter,
+        hyperparameters=hyperparameters,
     )
-    (job_dir / "meta.json").write_text(meta.to_json())
+    write_meta(meta)
     return meta
 
 
@@ -207,14 +222,44 @@ def _read_meta(job_id: str) -> JobMeta:
     return JobMeta(**d)
 
 
-def _write_meta(meta: JobMeta) -> None:
-    (JOBS_ROOT / meta.job_id / "meta.json").write_text(meta.to_json())
+@contextmanager
+def _meta_lock(job_id: str):
+    job_dir = JOBS_ROOT / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = job_dir / "meta.lock"
+    with lock_path.open("a+") as lock:
+        os.chmod(lock_path, 0o600)
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def write_meta(meta: JobMeta) -> None:
+    """Atomically persist metadata under a cross-process per-job lock."""
+    path = JOBS_ROOT / meta.job_id / "meta.json"
+    with _meta_lock(meta.job_id):
+        tmp = path.with_name(f".{path.name}.{secrets.token_hex(6)}.tmp")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(meta.to_json())
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, path)
+        finally:
+            if tmp.exists():
+                tmp.unlink()
+
+
+_write_meta = write_meta  # private compatibility alias
 
 
 def refresh_status(job_id: str) -> JobMeta:
     """Re-evaluate whether the job is still alive and persist the result."""
     meta = _read_meta(job_id)
-    if meta.status in {"completed", "failed", "killed"}:
+    if meta.status in {"completed", "failed", "killed", "timeout", "termination_failed"}:
         return meta
 
     exit_sentinel = JOBS_ROOT / job_id / "exit_code"
@@ -244,6 +289,40 @@ def refresh_status(job_id: str) -> JobMeta:
 DEFAULT_MAX_WAIT_S = 6 * 3600  # a single quantization/measurement job upper bound
 
 
+def _terminate_process_group(meta: JobMeta, grace_s: float = 3.0) -> bool:
+    """TERM, wait, KILL, then confirm the recorded process group is gone."""
+    try:
+        live_pgid = os.getpgid(meta.pid)
+    except (ProcessLookupError, PermissionError):
+        return not _pid_alive(meta.pid)
+    if meta.pgid is not None and live_pgid != meta.pgid:
+        return False
+
+    try:
+        os.killpg(live_pgid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        return not _job_alive(meta)
+
+    deadline = time.monotonic() + max(grace_s, 0.0)
+    while time.monotonic() < deadline:
+        if not _job_alive(meta):
+            return True
+        time.sleep(0.05)
+
+    try:
+        if meta.pgid is None or os.getpgid(meta.pid) == meta.pgid:
+            os.killpg(live_pgid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        if not _job_alive(meta):
+            return True
+        time.sleep(0.05)
+    return not _job_alive(meta)
+
+
 def wait_for_job(
     job_id: str,
     poll_interval: float = 2.0,
@@ -261,11 +340,10 @@ def wait_for_job(
         if meta.status != "running":
             return meta
         if deadline is not None and time.monotonic() >= deadline:
-            try:
-                os.killpg(os.getpgid(meta.pid), signal.SIGTERM)
-            except (ProcessLookupError, PermissionError):
-                pass
-            meta.status = "timeout"
+            confirmed = _terminate_process_group(meta)
+            meta.status = "timeout" if confirmed else "termination_failed"
+            meta.terminal_reason = f"exceeded max_wait_s={max_wait_s}"
+            meta.termination_confirmed = confirmed
             meta.finished_at = datetime.now(timezone.utc).isoformat()
             _write_meta(meta)
             return meta
@@ -312,15 +390,36 @@ def tail(job_id: str, n_lines: int = 80) -> dict[str, str]:
     job_dir = JOBS_ROOT / job_id
     if not job_dir.exists():
         raise FileNotFoundError(f"No such job: {job_id}")
+    n_lines = max(1, min(int(n_lines), 10_000))
     result = {}
     for name in ("stdout.log", "stderr.log"):
         p = job_dir / name
         if not p.exists():
             result[name] = ""
             continue
-        lines = p.read_text(errors="replace").splitlines()
-        result[name] = "\n".join(lines[-n_lines:])
+        result[name] = _tail_file(p, n_lines)
     return result
+
+
+def _tail_file(path: Path, n_lines: int, max_bytes: int = 2_000_000) -> str:
+    """Read at most ``max_bytes`` from the end of a potentially huge log."""
+    with path.open("rb") as f:
+        f.seek(0, os.SEEK_END)
+        end = f.tell()
+        pos = end
+        chunks: list[bytes] = []
+        newlines = 0
+        while pos > 0 and newlines <= n_lines and end - pos < max_bytes:
+            size = min(8192, pos, max_bytes - (end - pos))
+            if size <= 0:
+                break
+            pos -= size
+            f.seek(pos)
+            chunk = f.read(size)
+            chunks.append(chunk)
+            newlines += chunk.count(b"\n")
+    data = b"".join(reversed(chunks)).decode("utf-8", errors="replace")
+    return "\n".join(data.splitlines()[-n_lines:])
 
 
 def list_jobs() -> list[JobMeta]:
@@ -341,15 +440,10 @@ def kill(job_id: str) -> JobMeta:
     meta = _read_meta(job_id)
     if meta.status not in {"running"}:
         return meta
-    try:
-        live_pgid = os.getpgid(meta.pid)
-        # Only signal if the live process is still the job we launched; a recycled
-        # PID belonging to something else has a different pgid — never signal it.
-        if meta.pgid is None or live_pgid == meta.pgid:
-            os.killpg(live_pgid, signal.SIGTERM)
-    except ProcessLookupError:
-        pass
-    meta.status = "killed"
+    confirmed = _terminate_process_group(meta)
+    meta.status = "killed" if confirmed else "termination_failed"
+    meta.terminal_reason = "user requested termination"
+    meta.termination_confirmed = confirmed
     meta.finished_at = datetime.now(timezone.utc).isoformat()
     _write_meta(meta)
     return meta

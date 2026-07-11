@@ -2,7 +2,7 @@
 
 Used for isolated testing of the Adapt agent against a known (method, model)
 pair — e.g. `flatquant` + `meta-llama/Llama-2-7b-hf`. Loads the method's
-repo_url + bit-width from seed/methods.yaml, constructs a MethodCandidate
+repo_url + bit-width from the packaged catalog, constructs a MethodCandidate
 with placeholder scoring (Adapt doesn't read these fields), and invokes
 adapt_agent.run.
 """
@@ -13,6 +13,7 @@ import yaml
 
 from . import adapt_agent
 from .config import load_settings
+from .config import host_execution_policy
 from .schemas import MethodCandidate
 
 
@@ -59,6 +60,7 @@ def run(
     model_id: str,
     bits: int | None = None,
     trust_remote_code: bool = False,
+    allow_unsafe_host_execution: bool = False,
 ) -> tuple[str, str]:
     """Invoke the Adapt agent directly. Returns (script_path, script_code)."""
     entry = _load_method_entry(method_id)
@@ -69,6 +71,7 @@ def run(
         f"repo={candidate.repo_url}, model={model_id}",
         err=True,
     )
-    return adapt_agent.run(
-        model_id=model_id, method=candidate, trust_remote_code=trust_remote_code
-    )
+    with host_execution_policy(allow_unsafe_host_execution):
+        return adapt_agent.run(
+            model_id=model_id, method=candidate, trust_remote_code=trust_remote_code
+        )

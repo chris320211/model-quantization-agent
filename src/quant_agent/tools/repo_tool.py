@@ -13,17 +13,22 @@ Layout per method:
 from __future__ import annotations
 
 import json
+import fcntl
 import logging
 import os
 import re
+import shlex
 import shutil
 import subprocess
+from contextlib import contextmanager
+from functools import wraps
 from pathlib import Path
 
 from langchain_core.tools import tool
 
-from ..config import REPO_ROOT, child_env
+from ..config import REPO_ROOT, child_env, require_host_execution
 from .torch_spec import detect_torch_spec
+from ..runtime_deps import RUNTIME_PACKAGES
 
 log = logging.getLogger(__name__)
 
@@ -32,9 +37,12 @@ _INSTALL_TIMEOUT = 900
 _RUN_TIMEOUT_DEFAULT = 120
 _OUTPUT_TAIL_LINES = 60
 _READ_MAX_BYTES = 20_000
+_READ_HARD_MAX_BYTES = 200_000
+_LIST_MAX_ENTRIES = 500
 
 # A GitHub repo URL and nothing else — no shell metacharacters, no query string.
 _GITHUB_URL_RE = re.compile(r"^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/?$")
+_METHOD_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
 
 def _catalog_repo_urls(method_id: str) -> set[str] | None:
@@ -46,6 +54,34 @@ def _catalog_repo_urls(method_id: str) -> set[str] | None:
         if m.get("id") == method_id:
             return {u.rstrip("/") for u in (m.get("repos") or [])}
     return None
+
+
+def _known_method(method_id: str) -> bool:
+    return bool(_METHOD_ID_RE.fullmatch(method_id)) and _catalog_repo_urls(method_id) is not None
+
+
+@contextmanager
+def _method_lock(method_id: str):
+    lock_dir = VENV_ROOT / ".locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = lock_dir / f"{method_id}.lock"
+    with lock_path.open("a+") as lock:
+        os.chmod(lock_path, 0o600)
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def _locked_method(fn):
+    @wraps(fn)
+    def wrapped(method_id: str, *args, **kwargs):
+        if not _known_method(method_id):
+            return json.dumps({"status": "error", "error": f"unknown or invalid method_id: {method_id!r}"})
+        with _method_lock(method_id):
+            return fn(method_id, *args, **kwargs)
+    return wrapped
 
 
 def _safe_join(root: Path, rel: str) -> Path | None:
@@ -64,13 +100,16 @@ def _safe_join(root: Path, rel: str) -> Path | None:
     return None
 
 
-def _baseline_packages() -> list[str]:
+def _baseline_packages(python: Path) -> list[list[str]]:
     """Baseline install steps, with a torch pin chosen for the local GPU."""
     spec = detect_torch_spec()
     return [
-        "pip install --upgrade pip wheel",
-        spec.pip_install(),
-        "pip install transformers accelerate safetensors sentencepiece",
+        [str(python), "-m", "pip", "install", "--upgrade", "pip", "wheel"],
+        spec.pip_install_argv(str(python)),
+        [
+            str(python), "-m", "pip", "install",
+            *RUNTIME_PACKAGES,
+        ],
     ]
 
 
@@ -93,13 +132,21 @@ def _tail(text: str, n: int = _OUTPUT_TAIL_LINES) -> str:
     return "...(%d earlier lines)\n%s" % (len(lines) - n, "\n".join(lines[-n:]))
 
 
-def _run(cmd: str, cwd: Path | None, timeout: int, env_extra: dict | None = None) -> dict:
+def _run_argv(
+    cmd: list[str],
+    cwd: Path | None,
+    timeout: int,
+    env_extra: dict[str, str] | None = None,
+    *,
+    include_hf: bool = False,
+) -> dict:
+    require_host_execution("subprocess command")
     # Allowlisted env only — a cloned repo's install steps / setup.py must never see
     # the parent's cloud secrets (see config.child_env). env_extra (e.g. HF token) merges last.
-    env = child_env(env_extra)
+    env = child_env(env_extra, include_hf=include_hf)
     try:
         r = subprocess.run(
-            ["bash", "-lc", cmd],
+            cmd,
             cwd=str(cwd) if cwd else None,
             capture_output=True,
             text=True,
@@ -121,7 +168,45 @@ def _run(cmd: str, cwd: Path | None, timeout: int, env_extra: dict | None = None
     }
 
 
+_SAFE_ENV_ASSIGNMENTS = {"TORCH_CUDA_ARCH_LIST", "MAX_JOBS"}
+
+
+def _parse_venv_command(command: str, python: Path) -> tuple[list[str], dict[str, str]]:
+    """Turn a narrow command string into argv without invoking a shell.
+
+    Adapt/Fix only need Python entry points and pip. Shell operators, substitutions,
+    redirects, and arbitrary executables are deliberately unsupported.
+    """
+    if not isinstance(command, str) or not command.strip():
+        raise ValueError("command must be a non-empty string")
+    if any(token in command for token in ("\n", "\r", ";", "&&", "||", "|", ">", "<", "`", "$(")):
+        raise ValueError("shell operators and substitutions are not allowed")
+    try:
+        parts = shlex.split(command, posix=True)
+    except ValueError as e:
+        raise ValueError(f"invalid command quoting: {e}") from e
+    if not parts:
+        raise ValueError("command must be non-empty")
+
+    extra: dict[str, str] = {}
+    while parts and "=" in parts[0] and not parts[0].startswith(("-", "./", "/")):
+        key, value = parts.pop(0).split("=", 1)
+        if key not in _SAFE_ENV_ASSIGNMENTS:
+            raise ValueError(f"environment assignment {key!r} is not allowed")
+        extra[key] = value
+    if not parts:
+        raise ValueError("command contains no executable")
+
+    executable, *args = parts
+    if executable in {"python", "python3", str(python)}:
+        return [str(python), *args], extra
+    if executable in {"pip", "pip3"}:
+        return [str(python), "-m", "pip", *args], extra
+    raise ValueError(f"executable {executable!r} is not allowed; use python or pip")
+
+
 @tool
+@_locked_method
 def clone_method_repo(method_id: str, repo_url: str) -> str:
     """Clone a quantization method's GitHub repo into .venvs/<method_id>/repo/.
 
@@ -135,7 +220,7 @@ def clone_method_repo(method_id: str, repo_url: str) -> str:
             {"status": "error", "error": f"repo_url is not a plain GitHub repo URL: {repo_url!r}"}
         )
     # Pin to the catalog: the URL must be one this method actually declares in
-    # seed/methods.yaml, so a hijacked candidate can't point us at an arbitrary repo.
+    # the packaged catalog, so a hijacked candidate can't point at an arbitrary repo.
     known = _catalog_repo_urls(method_id)
     if known is None:
         return json.dumps({"status": "error", "error": f"unknown method_id: {method_id!r}"})
@@ -153,7 +238,25 @@ def clone_method_repo(method_id: str, repo_url: str) -> str:
     venv_dir.mkdir(parents=True, exist_ok=True)
 
     if repo.exists() and (repo / ".git").exists():
-        return json.dumps({"status": "ok", "path": str(repo), "already_present": True})
+        origin = subprocess.run(
+            ["git", "-C", str(repo), "remote", "get-url", "origin"],
+            capture_output=True, text=True, timeout=15, env=child_env(),
+        )
+        expected = repo_url.strip().rstrip("/")
+        actual = (origin.stdout or "").strip().rstrip("/")
+        if origin.returncode != 0 or actual != expected:
+            return json.dumps({
+                "status": "error",
+                "error": f"existing checkout origin mismatch: expected {expected!r}, got {actual!r}",
+            })
+        head = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=15, env=child_env(),
+        )
+        return json.dumps({
+            "status": "ok", "path": str(repo), "already_present": True,
+            "commit_sha": (head.stdout or "").strip() or None,
+        })
 
     if repo.exists():
         shutil.rmtree(repo)
@@ -173,10 +276,18 @@ def clone_method_repo(method_id: str, repo_url: str) -> str:
         return json.dumps(
             {"status": "error", "error": _tail(r.stderr or r.stdout or "clone failed")}, indent=2
         )
-    return json.dumps({"status": "ok", "path": str(repo), "already_present": False}, indent=2)
+    head = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        capture_output=True, text=True, timeout=15, env=child_env(),
+    )
+    return json.dumps({
+        "status": "ok", "path": str(repo), "already_present": False,
+        "commit_sha": (head.stdout or "").strip() or None,
+    }, indent=2)
 
 
 @tool
+@_locked_method
 def install_method_venv(method_id: str, install_steps: list[str]) -> str:
     """Create .venvs/<method_id>/ and run install_steps inside it.
 
@@ -195,17 +306,24 @@ def install_method_venv(method_id: str, install_steps: list[str]) -> str:
         )
 
     if not py.exists():
-        create = _run(f"python3 -m venv {venv_dir}", cwd=None, timeout=120)
+        create = _run_argv(["python3", "-m", "venv", str(venv_dir)], cwd=None, timeout=120)
         if not create["ok"]:
             return json.dumps({"status": "error", "stage": "venv-create", **create}, indent=2)
 
-    activate = f"source {venv_dir}/bin/activate"
     results: list[dict] = []
-    for step in _baseline_packages() + list(install_steps):
+    steps: list[tuple[str, list[str], dict[str, str]]] = [
+        (shlex.join(argv), argv, {}) for argv in _baseline_packages(py)
+    ]
+    for step in install_steps:
+        try:
+            argv, extra = _parse_venv_command(step, py)
+        except ValueError as e:
+            return json.dumps({"status": "error", "stage": "command-policy", "error": str(e)})
+        steps.append((step, argv, extra))
+    for step, argv, extra in steps:
         # Audit trail — install_steps are LLM-chosen and run in a shell by design.
         log.info("install_method_venv[%s] step: %s", method_id, step)
-        cmd = f"{activate} && {step}"
-        r = _run(cmd, cwd=repo, timeout=_INSTALL_TIMEOUT)
+        r = _run_argv(argv, cwd=repo, timeout=_INSTALL_TIMEOUT, env_extra=extra)
         results.append({"step": step, **r})
         if not r["ok"]:
             return json.dumps(
@@ -217,6 +335,7 @@ def install_method_venv(method_id: str, install_steps: list[str]) -> str:
 
 
 @tool
+@_locked_method
 def run_in_venv(method_id: str, command: str, cwd_in_repo: str | None = None, timeout: int = _RUN_TIMEOUT_DEFAULT) -> str:
     """Run a shell command inside the method's venv (venv activated, HF_TOKEN exported).
 
@@ -239,11 +358,13 @@ def run_in_venv(method_id: str, command: str, cwd_in_repo: str | None = None, ti
     if not cwd.exists():
         return json.dumps({"status": "error", "error": f"cwd not found: {cwd}"})
 
-    hf_token = os.environ.get("HUGGINGFACE_HUB_TOKEN") or os.environ.get("HF_TOKEN") or ""
-    env_extra = {"HUGGINGFACE_HUB_TOKEN": hf_token, "HF_TOKEN": hf_token} if hf_token else None
-
-    cmd = f"source {venv_dir}/bin/activate && {command}"
-    r = _run(cmd, cwd=cwd, timeout=timeout, env_extra=env_extra)
+    try:
+        argv, env_extra = _parse_venv_command(command, _venv_python(method_id))
+    except ValueError as e:
+        return json.dumps({"status": "error", "stage": "command-policy", "error": str(e)})
+    r = _run_argv(
+        argv, cwd=cwd, timeout=timeout, env_extra=env_extra, include_hf=True,
+    )
     return json.dumps({"status": "ok" if r["ok"] else "error", **r}, indent=2)
 
 
@@ -253,6 +374,8 @@ def list_repo_dir(method_id: str, path: str = "") -> str:
 
     Local filesystem read — no GitHub API calls, no rate limits. Use after clone.
     """
+    if not _known_method(method_id):
+        return json.dumps({"status": "error", "error": f"unknown or invalid method_id: {method_id!r}"})
     root = _repo_dir(method_id)
     if not root.exists():
         return json.dumps({"status": "error", "error": f"repo not cloned: {root}"})
@@ -264,9 +387,13 @@ def list_repo_dir(method_id: str, path: str = "") -> str:
     if not target.is_dir():
         return json.dumps({"status": "error", "error": f"not a directory: {target}"})
     entries = []
-    for p in sorted(target.iterdir()):
+    all_entries = sorted(target.iterdir())
+    for p in all_entries[:_LIST_MAX_ENTRIES]:
         entries.append({"name": p.name, "type": "dir" if p.is_dir() else "file"})
-    return json.dumps({"status": "ok", "path": str(target.relative_to(root)) or ".", "entries": entries}, indent=2)
+    return json.dumps({
+        "status": "ok", "path": str(target.relative_to(root)) or ".",
+        "entries": entries, "truncated": len(all_entries) > _LIST_MAX_ENTRIES,
+    }, indent=2)
 
 
 @tool
@@ -276,6 +403,8 @@ def read_repo_file(method_id: str, path: str, max_bytes: int = _READ_MAX_BYTES) 
     Truncates to max_bytes to keep tool results bounded. Use after clone for source
     inspection.
     """
+    if not _known_method(method_id):
+        return json.dumps({"status": "error", "error": f"unknown or invalid method_id: {method_id!r}"})
     root = _repo_dir(method_id)
     if not root.exists():
         return json.dumps({"status": "error", "error": f"repo not cloned: {root}"})
@@ -284,14 +413,16 @@ def read_repo_file(method_id: str, path: str, max_bytes: int = _READ_MAX_BYTES) 
         return json.dumps({"status": "error", "error": f"path escapes repo: {path!r}"})
     if not target.exists() or not target.is_file():
         return json.dumps({"status": "error", "error": f"file not found: {target}"})
-    data = target.read_bytes()
+    max_bytes = max(1, min(int(max_bytes), _READ_HARD_MAX_BYTES))
+    with target.open("rb") as f:
+        data = f.read(max_bytes + 1)
     truncated = len(data) > max_bytes
     text = data[:max_bytes].decode("utf-8", errors="replace")
     return json.dumps(
         {
             "status": "ok",
             "path": str(target.relative_to(root)),
-            "size_bytes": len(data),
+            "size_bytes": target.stat().st_size,
             "truncated": truncated,
             "content": text,
         },

@@ -11,6 +11,7 @@ so users can pin exotic combinations without editing the code.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -32,6 +33,10 @@ class TorchSpec:
     def pip_install(self) -> str:
         return f"pip install --index-url {self.index_url} {self.torch_pin}"
 
+    def pip_install_argv(self, python: str) -> list[str]:
+        """Safe argv form used by subprocess callers (no shell interpolation)."""
+        return [python, "-m", "pip", "install", "--index-url", self.index_url, self.torch_pin]
+
 
 _DEFAULT_SPEC = TorchSpec(torch_pin="torch==2.3.1", cuda_tag="cu121")
 _HOPPER_SPEC = TorchSpec(torch_pin="torch==2.4.1", cuda_tag="cu124")
@@ -44,7 +49,9 @@ def _parse_override(raw: str) -> TorchSpec | None:
     pin, tag = raw.split("|", 1)
     pin = pin.strip()
     tag = tag.strip()
-    if not pin.startswith("torch==") or not tag.startswith("cu"):
+    if not re.fullmatch(r"torch==\d+\.\d+\.\d+(?:[A-Za-z0-9_.+-]*)?", pin):
+        return None
+    if not re.fullmatch(r"cu\d{3}", tag):
         return None
     return TorchSpec(torch_pin=pin, cuda_tag=tag)
 

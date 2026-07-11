@@ -22,7 +22,7 @@ import subprocess
 from huggingface_hub import hf_hub_download
 from langchain_core.tools import tool
 
-from ..config import child_env, load_settings
+from ..config import child_env, load_settings, require_host_execution
 from ..executor import venv_python
 
 log = logging.getLogger(__name__)
@@ -149,11 +149,14 @@ def inspect_architecture_core(
             cfg_info,
         )
 
+    require_host_execution("model architecture introspection")
+
     env = child_env(
         {
             "INTROSPECT_MODEL_ID": model_id,
             "INTROSPECT_TRUST": "1" if trust_remote_code else "0",
-        }
+        },
+        include_hf=True,
     )
     try:
         r = subprocess.run(

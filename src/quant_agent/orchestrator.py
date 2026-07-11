@@ -35,6 +35,7 @@ from .pareto import Metrics, best_so_far, detect_stagnation, is_pareto_improveme
 from .schemas import MethodCandidate, ResearchReport
 from .tools.executor_tools import execute_quantization
 from . import tune_agent, tune_history
+from .config import host_execution_policy
 
 log = logging.getLogger(__name__)
 
@@ -316,7 +317,7 @@ def _persist_metrics(meta: JobMeta, metrics: Metrics, hyperparameters: dict | No
     meta.metrics = metrics.to_dict()
     if hyperparameters is not None:
         meta.hyperparameters = hyperparameters
-    (JOBS_ROOT / meta.job_id / "meta.json").write_text(meta.to_json())
+    executor.write_meta(meta)
 
 
 def _prune_iteration(meta: JobMeta) -> None:
@@ -330,11 +331,17 @@ def _prune_iteration(meta: JobMeta) -> None:
         log.warning("disk prune failed for %s: %s", meta.job_id, e)
     out_dir = meta.output_dir
     try:
-        if out_dir and out_dir.startswith("./quantized/"):
+        if out_dir:
             from pathlib import Path
-            p = Path(out_dir)
-            if p.exists():
+            from .config import REPO_ROOT
+
+            root = (REPO_ROOT / "quantized").resolve()
+            raw = Path(out_dir)
+            p = (REPO_ROOT / raw).resolve() if not raw.is_absolute() else raw.resolve()
+            if p != root and root in p.parents and p.exists():
                 shutil.rmtree(p)
+            elif p != root and root not in p.parents:
+                log.warning("refusing to prune output outside %s: %s", root, p)
     except OSError as e:
         log.warning("output prune failed for %s: %s", out_dir, e)
 
@@ -483,7 +490,7 @@ def _tune_loop(
         iter_meta = executor.refresh_status(job["job_id"])
         iter_meta.tune_iter = iteration
         iter_meta.hyperparameters = dict(next_hp)
-        (JOBS_ROOT / iter_meta.job_id / "meta.json").write_text(iter_meta.to_json())
+        executor.write_meta(iter_meta)
 
         final, chain = _supervise(
             initial_job_id=job["job_id"],
@@ -614,7 +621,7 @@ def _finalize_loop(
 # ---------------------------------------------------------------------------
 
 
-def run(
+def _run_core(
     user_input: str,
     dry: bool = False,
     max_repairs: int = 3,
@@ -740,3 +747,29 @@ def run(
         return handoff + "\n\n" + trail + baseline_summary + "\n" + tune_summary
 
     return f"All {len(order)} candidates failed. Last error: {last_error}"
+
+
+def run(
+    user_input: str,
+    dry: bool = False,
+    max_repairs: int = 3,
+    max_adapt_retries: int = 2,
+    *,
+    tune: bool = False,
+    auto_tune: bool = False,
+    max_tune_iter: int = 5,
+    stagnate_after: int = 2,
+    allow_unsafe_host_execution: bool = False,
+) -> str:
+    """Run the pipeline under an explicit host-execution policy."""
+    with host_execution_policy(allow_unsafe_host_execution):
+        return _run_core(
+            user_input,
+            dry=dry,
+            max_repairs=max_repairs,
+            max_adapt_retries=max_adapt_retries,
+            tune=tune,
+            auto_tune=auto_tune,
+            max_tune_iter=max_tune_iter,
+            stagnate_after=stagnate_after,
+        )

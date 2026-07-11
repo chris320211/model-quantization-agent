@@ -67,6 +67,12 @@ def ask_cmd(
         "--stagnate-after",
         help="Stop tuning after this many consecutive non-improvements.",
     ),
+    allow_unsafe_host_execution: bool = typer.Option(
+        False,
+        "--allow-unsafe-host-execution",
+        "--unsafe-host",
+        help="Acknowledge that third-party/generated code will run unsandboxed on this host.",
+    ),
 ) -> None:
     """Research → pick → Adapt → execute → (optional) closed-loop tuner."""
     typer.echo(
@@ -79,13 +85,14 @@ def ask_cmd(
             auto_tune=auto_tune,
             max_tune_iter=max_tune_iter,
             stagnate_after=stagnate_after,
+            allow_unsafe_host_execution=allow_unsafe_host_execution,
         )
     )
 
 
 @app.command("adapt")
 def adapt_cmd(
-    method_id: str = typer.Argument(..., help="Catalog id from seed/methods.yaml, e.g. 'flatquant'."),
+    method_id: str = typer.Argument(..., help="Packaged catalog id, e.g. 'flatquant'."),
     model_id: str = typer.Argument(..., help="Canonical HuggingFace model id, e.g. 'meta-llama/Llama-2-7b-hf'."),
     bits: int = typer.Option(None, "--bits", help="Target bit-width (default: first value in the method's 'bits' list)."),
     trust_remote_code: bool = typer.Option(
@@ -93,10 +100,20 @@ def adapt_cmd(
         "--trust-remote-code",
         help="Allow executing the model's custom modeling code (auto_map models). Off by default.",
     ),
+    allow_unsafe_host_execution: bool = typer.Option(
+        False,
+        "--allow-unsafe-host-execution",
+        "--unsafe-host",
+        help="Acknowledge that third-party/generated code will run unsandboxed on this host.",
+    ),
 ) -> None:
     """Skip Research/selection and drive the Adapt agent directly against a known (method, model) pair."""
     script_path, _ = adapt_only_module.run(
-        method_id=method_id, model_id=model_id, bits=bits, trust_remote_code=trust_remote_code
+        method_id=method_id,
+        model_id=model_id,
+        bits=bits,
+        trust_remote_code=trust_remote_code,
+        allow_unsafe_host_execution=allow_unsafe_host_execution,
     )
     typer.echo(f"Script written: {script_path}")
 
@@ -120,7 +137,10 @@ def jobs_status(job_id: str) -> None:
 
 
 @jobs_app.command("logs")
-def jobs_logs(job_id: str, n: int = typer.Option(80, "-n", help="Lines per stream")) -> None:
+def jobs_logs(
+    job_id: str,
+    n: int = typer.Option(80, "-n", min=1, max=10_000, help="Lines per stream"),
+) -> None:
     logs = executor_module.tail(job_id, n_lines=n)
     typer.echo("=== stdout ===")
     typer.echo(logs["stdout.log"])

@@ -86,7 +86,7 @@ def test_session_retry_on_error(tmp_path, monkeypatch):
     assert not out.exists()  # nothing written on recoverable failure
 
 
-def test_session_exhaustion_writes_with_warning(tmp_path, monkeypatch):
+def test_session_exhaustion_fails_closed_without_writing(tmp_path, monkeypatch):
     _stub_venv(tmp_path, monkeypatch)
     sess = script_io.ValidationSession(method_id="awq", max_attempts=1, allowed_root=tmp_path)
     out = tmp_path / "script.py"
@@ -94,8 +94,20 @@ def test_session_exhaustion_writes_with_warning(tmp_path, monkeypatch):
         r = sess.write(str(out), "import autowaq\n")
     assert r["status"] == "error-exhausted"
     assert r["attempts_left"] == 0
-    body = out.read_text()
-    assert body.startswith("# WARNING: failed validation")
+    assert not out.exists()
+    assert sess.validated_path is None
+
+
+def test_session_tracks_only_current_validated_path(tmp_path, monkeypatch):
+    _stub_venv(tmp_path, monkeypatch)
+    stale = tmp_path / "stale.py"
+    stale.write_text("print('old')\n")
+    out = tmp_path / "current.py"
+    sess = script_io.ValidationSession(method_id="awq", allowed_root=tmp_path)
+    with patch.object(subprocess, "run", _fake_run_ok):
+        sess.write(str(out), "import os\n")
+    assert sess.validated_path == out.resolve()
+    assert stale.read_text() == "print('old')\n"
 
 
 def test_make_write_script_tool_returns_json(tmp_path, monkeypatch):

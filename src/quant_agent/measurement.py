@@ -24,7 +24,7 @@ import subprocess
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from .config import child_env
+from .config import child_env, require_host_execution
 from .pareto import Metrics
 
 log = logging.getLogger(__name__)
@@ -222,6 +222,7 @@ def run_measurement(
     Raises:
         RuntimeError: if the script returns non-zero or doesn't emit a metrics JSON.
     """
+    require_host_execution("model measurement")
     script_path = write_measure_script(job_dir)
     output_json = job_dir / "metrics.json"
     log_path = job_dir / "measure.log"
@@ -235,7 +236,8 @@ def run_measurement(
             **measure_overrides,
             "MEASURE_MODEL_PATH": str(model_path),
             "MEASURE_OUTPUT_JSON": str(output_json),
-        }
+        },
+        include_hf=True,
     )
 
     with log_path.open("wb") as logf:

@@ -62,3 +62,24 @@ def test_pip_install_string_includes_index_url():
     cmd = spec.pip_install()
     assert "--index-url https://download.pytorch.org/whl/cu121" in cmd
     assert "torch==2.3.1" in cmd
+
+
+@pytest.mark.parametrize("raw", [
+    "torch==2.5.0;id|cu125",
+    "torch==2.5.0|cu125;echo",
+    "torch==2.5|cu125",
+    "torch==2.5.0|cu12x",
+    "torch==2.5.0 --pre|cu125",
+])
+def test_env_override_rejects_shell_metacharacters_and_malformed_values(monkeypatch, raw):
+    monkeypatch.setenv("QUANT_AGENT_TORCH_SPEC", raw)
+    monkeypatch.setattr(torch_spec.shutil, "which", lambda cmd: None)
+    assert torch_spec.detect_torch_spec() == torch_spec._DEFAULT_SPEC
+
+
+def test_pip_install_argv_is_shell_free():
+    spec = torch_spec.TorchSpec(torch_pin="torch==2.3.1", cuda_tag="cu121")
+    assert spec.pip_install_argv("/venv/bin/python") == [
+        "/venv/bin/python", "-m", "pip", "install", "--index-url",
+        "https://download.pytorch.org/whl/cu121", "torch==2.3.1",
+    ]

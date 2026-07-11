@@ -19,7 +19,7 @@ from pathlib import Path
 
 from langchain_core.tools import tool
 
-from ..config import REPO_ROOT, child_env
+from ..config import REPO_ROOT, child_env, require_host_execution
 from ..executor import venv_python
 
 _MAX_ATTEMPTS = 3
@@ -80,6 +80,7 @@ def validate(code: str, method_id: str) -> tuple[bool, str, str]:
         return True, "ok", "no top-level imports"
 
     probe = ";".join(f"import {m}" for m in modules)
+    require_host_execution("dry-import validation")
     try:
         r = subprocess.run(
             [str(py), "-c", probe],
@@ -111,6 +112,7 @@ class ValidationSession:
         self.attempts_left = max_attempts
         # Generated scripts may only be written under this directory.
         self.allowed_root = (allowed_root or _DEFAULT_OUTPUT_ROOT)
+        self.validated_path: Path | None = None
 
     def write(self, path: str, code: str) -> dict:
         out = _contained(self.allowed_root, path)
@@ -126,6 +128,7 @@ class ValidationSession:
         if ok:
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(code)
+            self.validated_path = out
             return {
                 "status": "ok",
                 "stage": stage,
@@ -143,15 +146,12 @@ class ValidationSession:
                 "attempts_left": self.attempts_left,
             }
 
-        # Exhausted: still write so the user can inspect, with a warning header.
-        out.parent.mkdir(parents=True, exist_ok=True)
-        header = f"# WARNING: failed validation at stage={stage}: {msg}\n"
-        out.write_text(header + code)
+        # Exhausted: fail closed. A known-invalid artifact must never become an
+        # executable handoff merely because the retry budget was consumed.
         return {
             "status": "error-exhausted",
             "stage": stage,
             "message": msg,
-            "path": str(out),
             "attempts_left": 0,
         }
 
@@ -165,8 +165,7 @@ def make_write_script_tool(session: ValidationSession):
         and, on success, write it to `path`. On validation failure, returns an error
         payload with `attempts_left` so you can revise and call again.
 
-        After attempts are exhausted the script is written anyway with a warning
-        header so the user can inspect the last attempt.
+        After attempts are exhausted no file is written; the Adapt invocation fails.
         """
         return json.dumps(session.write(path, code), indent=2)
 

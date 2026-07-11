@@ -110,6 +110,21 @@ def read_job_logs(job_id: str, n_lines: int = 200) -> str:
 
 
 _SCRIPT_READ_MAX_BYTES = 20_000
+_SCRIPT_READ_HARD_MAX_BYTES = 200_000
+
+
+def _tune_locked_block(text: str) -> tuple[str, ...]:
+    """Return the normalized protected header block, if present."""
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if line.strip().startswith("# TUNE-LOCKED HYPERPARAMETERS"):
+            block = [line.strip()]
+            for following in lines[i + 1:]:
+                if not following.strip().startswith("#"):
+                    break
+                block.append(following.strip())
+            return tuple(block)
+    return ()
 
 
 @tool
@@ -125,14 +140,16 @@ def read_script(job_id: str, max_bytes: int = _SCRIPT_READ_MAX_BYTES) -> str:
     script = executor.JOBS_ROOT / job_id / "script.py"
     if not script.exists():
         return json.dumps({"status": "error", "error": f"no such script: {script}"})
-    data = script.read_bytes()
+    max_bytes = max(1, min(int(max_bytes), _SCRIPT_READ_HARD_MAX_BYTES))
+    with script.open("rb") as f:
+        data = f.read(max_bytes + 1)
     truncated = len(data) > max_bytes
     text = data[:max_bytes].decode("utf-8", errors="replace")
     return json.dumps(
         {
             "status": "ok",
             "path": str(script),
-            "size_bytes": len(data),
+            "size_bytes": script.stat().st_size,
             "truncated": truncated,
             "content": text,
         },
@@ -169,6 +186,10 @@ def edit_script(job_id: str, old: str, new: str) -> str:
         )
 
     new_text = text.replace(old, new, 1)
+    if _tune_locked_block(new_text) != _tune_locked_block(text):
+        return json.dumps(
+            {"status": "error", "error": "edit would modify TUNE-LOCKED HYPERPARAMETERS"}
+        )
     try:
         ast.parse(new_text)
     except SyntaxError as e:
@@ -222,6 +243,8 @@ def relaunch_job(job_id: str, fix_description: str) -> str:
             parent_job_id=job_id,
             attempt=parent.attempt + 1,
             fix_note=fix_description.strip() or None,
+            tune_iter=parent.tune_iter,
+            hyperparameters=parent.hyperparameters,
         )
     except (ValueError, RuntimeError) as e:
         return json.dumps({"status": "error", "error": str(e)})

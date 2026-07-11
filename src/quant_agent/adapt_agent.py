@@ -25,7 +25,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import secrets
 from pathlib import Path
 
 from langchain_anthropic import ChatAnthropic
@@ -193,14 +195,6 @@ def _safe_slug(s: str) -> str:
     return re.sub(r"[^a-zA-Z0-9._-]+", "_", s).strip("_")
 
 
-def _read_output_file(path: Path) -> str:
-    text = path.read_text()
-    if text.startswith("# WARNING: failed validation"):
-        lines = text.splitlines()
-        return "\n".join(lines[1:])
-    return text
-
-
 def run(
     model_id: str,
     method: MethodCandidate,
@@ -243,8 +237,9 @@ def run(
     out_dir.mkdir(parents=True, exist_ok=True)
     suffix = f"_{script_suffix}" if script_suffix else ""
     script_path = out_dir / f"quantize_{_safe_slug(model_id)}_{method.id}{suffix}.py"
+    attempt_path = out_dir / f".{script_path.name}.{secrets.token_hex(6)}.tmp"
 
-    session = ValidationSession(method_id=method.id)
+    session = ValidationSession(method_id=method.id, allowed_root=out_dir)
     write_script = make_write_script_tool(session)
 
     arxiv_id = _catalog_arxiv_id(method.id)
@@ -293,7 +288,7 @@ def run(
         arxiv_id=arxiv_id or "(none on file — rely on the repo)",
         hyperparameters_block=_format_hyperparameters_block(hyperparameters),
         model_id=model_id,
-        script_path=str(script_path),
+        script_path=str(attempt_path),
         output_dir=output_dir,
         trust_remote_code=trust_remote_code,
         trust_hint=trust_hint,
@@ -302,7 +297,7 @@ def run(
 
     user_msg = (
         f"Port {model_id} to {method.name} ({method.bits}-bit). "
-        f"Clone the repo, build the venv, write the script to {script_path}."
+        f"Clone the repo, build the venv, write the script to {attempt_path}."
     )
     if previous_error is not None:
         user_msg += (
@@ -311,15 +306,28 @@ def run(
             "same tool sequence."
         )
 
-    agent.invoke(
-        {"messages": [("user", user_msg)]},
-        config={"recursion_limit": 60},
-    )
-
-    if not script_path.exists():
-        raise RuntimeError(
-            f"Adapt agent finished without writing {script_path}. Check the agent's last tool call."
+    try:
+        agent.invoke(
+            {"messages": [("user", user_msg)]},
+            config={"recursion_limit": 60},
         )
+    except Exception:
+        if attempt_path.exists():
+            attempt_path.unlink()
+        raise
 
-    code = _read_output_file(script_path)
+    expected = attempt_path.resolve()
+    if session.validated_path is None or session.validated_path.resolve() != expected:
+        if attempt_path.exists():
+            attempt_path.unlink()
+        raise RuntimeError(
+            "Adapt agent finished without producing a validated artifact in this session. "
+            "Check the agent's final write_script result."
+        )
+    if not attempt_path.exists():
+        raise RuntimeError(f"validated Adapt artifact disappeared before promotion: {attempt_path}")
+
+    # Atomic promotion ensures a failed attempt cannot corrupt a previous good script.
+    os.replace(attempt_path, script_path)
+    code = script_path.read_text()
     return str(script_path), code

@@ -146,6 +146,8 @@ def test_relaunch_job_records_fix_note(tmp_path, monkeypatch):
         started_at="2026-07-10T00:00:00+00:00",
         status="failed",
         exit_code=1,
+        tune_iter=2,
+        hyperparameters={"group_size": 128},
     )
     monkeypatch.setattr(executor_tools.executor, "refresh_status", lambda jid: parent)
 
@@ -176,4 +178,29 @@ def test_relaunch_job_records_fix_note(tmp_path, monkeypatch):
     )
     assert out["status"] == "ok"
     assert captured["fix_note"] == "pinned foo==1.2"
+    assert captured["tune_iter"] == 2
+    assert captured["hyperparameters"] == {"group_size": 128}
     assert out["fix_note"] == "pinned foo==1.2"
+
+
+def test_edit_script_cannot_change_tune_locked_block(tmp_path, monkeypatch):
+    from quant_agent.tools import executor_tools
+
+    jid = "20260101T000000Z-abc999"
+    job_dir = tmp_path / jid
+    job_dir.mkdir()
+    script = job_dir / "script.py"
+    script.write_text(
+        "# TUNE-LOCKED HYPERPARAMETERS (do not modify in fix_agent):\n"
+        "# group_size=128\n"
+        "print('ok')\n"
+    )
+    monkeypatch.setattr(executor_tools.executor, "JOBS_ROOT", tmp_path)
+    result = json.loads(
+        executor_tools.edit_script.invoke(
+            {"job_id": jid, "old": "# group_size=128", "new": "# group_size=64"}
+        )
+    )
+    assert result["status"] == "error"
+    assert "TUNE-LOCKED" in result["error"]
+    assert "group_size=128" in script.read_text()

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
+from threading import RLock
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -16,6 +18,30 @@ _DEFAULT_WORKSPACE = (
     else Path("~/.local/share/quant-agent").expanduser()
 )
 REPO_ROOT = Path(os.environ.get("QUANT_AGENT_WORKSPACE", _DEFAULT_WORKSPACE)).expanduser().resolve()
+
+_HOST_EXECUTION_ALLOWED = False
+_HOST_EXECUTION_POLICY_LOCK = RLock()
+
+
+@contextmanager
+def host_execution_policy(allowed: bool):
+    """Scope the explicit acknowledgement required for unsandboxed host execution."""
+    global _HOST_EXECUTION_ALLOWED
+    with _HOST_EXECUTION_POLICY_LOCK:
+        previous = _HOST_EXECUTION_ALLOWED
+        _HOST_EXECUTION_ALLOWED = bool(allowed)
+        try:
+            yield
+        finally:
+            _HOST_EXECUTION_ALLOWED = previous
+
+
+def require_host_execution(operation: str) -> None:
+    if not _HOST_EXECUTION_ALLOWED:
+        raise RuntimeError(
+            f"{operation} would execute third-party/generated code on the host. "
+            "Re-run with --allow-unsafe-host-execution only on an isolated disposable machine."
+        )
 
 
 @dataclass(frozen=True)
@@ -56,7 +82,7 @@ _CHILD_ENV_ALLOWLIST: tuple[str, ...] = (
 )
 
 
-def child_env(extra: dict[str, str] | None = None, *, include_hf: bool = True) -> dict[str, str]:
+def child_env(extra: dict[str, str] | None = None, *, include_hf: bool = False) -> dict[str, str]:
     """Build a minimal environment for a child process.
 
     Starts from an allowlist (``_CHILD_ENV_ALLOWLIST``) rather than the parent's full
@@ -67,7 +93,8 @@ def child_env(extra: dict[str, str] | None = None, *, include_hf: bool = True) -
         extra:      Additional key/values to set (merged last; overrides allowlist).
         include_hf: When True, forward the HuggingFace token under both
                     ``HUGGINGFACE_HUB_TOKEN`` and ``HF_TOKEN`` (needed to load gated
-                    models). Pass False for children that never touch the Hub.
+                    models). Credential forwarding is opt-in so installers, build
+                    backends, and inspection commands never receive it accidentally.
     """
     env: dict[str, str] = {
         k: os.environ[k] for k in _CHILD_ENV_ALLOWLIST if k in os.environ

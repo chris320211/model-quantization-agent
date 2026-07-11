@@ -19,7 +19,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from .config import REPO_ROOT, child_env
+from .config import REPO_ROOT, child_env, require_host_execution
 from .measurement import run_measurement
 from .pareto import Metrics
 from .tools.torch_spec import detect_torch_spec
@@ -44,6 +44,7 @@ def _ensure_venv() -> Path:
 
     Idempotent: if the venv already has torch + transformers, returns immediately.
     """
+    require_host_execution("fp16 baseline environment setup")
     py = _venv_python()
     if py.exists():
         return py

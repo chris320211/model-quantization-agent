@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 
 import requests
 from langchain_core.tools import tool
@@ -9,13 +10,16 @@ from langchain_core.tools import tool
 from ..config import load_settings
 
 _MAX_BODY = 12_000
+_REPO_URL_RE = re.compile(
+    r"^https://github\.com/(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+)/?$"
+)
 
 
 def _parse_owner_repo(repo_url: str) -> tuple[str, str]:
-    parts = repo_url.rstrip("/").replace("https://github.com/", "").split("/")
-    if len(parts) < 2:
+    match = _REPO_URL_RE.fullmatch(repo_url.strip())
+    if match is None:
         raise ValueError(f"Could not parse repo URL: {repo_url}")
-    return parts[0], parts[1]
+    return match.group("owner"), match.group("repo")
 
 
 def _headers(accept: str = "application/vnd.github+json") -> dict:

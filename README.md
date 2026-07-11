@@ -1,10 +1,10 @@
 # quant-agent
 
-Two-subagent LangChain pipeline that ports quantization to HuggingFace LLMs. Given a free-form request like `"port llama2 7b to g5.xlarge"`, it:
+Staged LangChain pipeline that ports quantization to HuggingFace LLMs. Given a free-form request like `"port llama2 7b to g5.xlarge"`, it:
 
-1. **Research agent** resolves the model + instance, walks the catalog, and returns **3–8 candidate methods** (no winner picked).
+1. A **deterministic compatibility engine** resolves hard model/GPU/backend constraints; the **Research agent** investigates unknowns and returns **3–8 candidate methods** (no winner picked).
 2. **You pick one** from stdin.
-3. **Adapt agent** clones the chosen method's repo, builds its venv, learns the target model's exact architecture (full `config.json` + a meta-device module-tree introspection), consults the method's paper when needed, writes a script, and validates it (`ast.parse` + top-level dry-import in the method's venv; up to 3 retries).
+3. **Staged Adapt** acquires the chosen repository, creates a repository-derived install/entrypoint plan, builds its venv, learns the target model's exact architecture (full `config.json` + meta-device module-tree introspection), authors a script, and validates syntax, imports, exact model/output values, and tune-locked hyperparameters (up to 3 retries).
 4. The validated script is atomically promoted and launched end-to-end on the box
    (skip execution with `--dry`; Adapt still requires the host-execution acknowledgement).
 
@@ -81,6 +81,12 @@ GPTQ, AWQ, SmoothQuant, QuIP#, SpinQuant, bitsandbytes (LLM.int8 + NF4), FP8, Om
 End-to-end execution venvs are wired for: **AWQ, GPTQ, bnb-NF4, bnb-LLM.int8** (the methods in `scripts/bootstrap_ec2.sh`). Other methods surface in Research and are adapted by the Adapt agent, which builds a matching `.venvs/<method_id>/` on demand via `install_method_venv`. Venvs resolve purely by the `.venvs/<method_id>/` naming convention (see `executor.venv_python`); to pre-provision one, add a case to `bootstrap_ec2.sh` keyed by the catalog id.
 
 ## Architecture
+
+The implementation uses a deterministic compatibility gate before LLM ranking,
+then runs Adapt as explicit acquisition, planning, environment, architecture,
+generation, validation, and promotion stages. Each executed job receives a
+secret-free reproducibility manifest. See [docs/architecture.md](docs/architecture.md)
+for the stage contracts, strengthened validation, and optional container policy.
 
 ```
                 ┌──────────────────────────────┐

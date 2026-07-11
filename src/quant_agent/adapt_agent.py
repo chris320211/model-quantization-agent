@@ -1,6 +1,6 @@
-"""Adapt agent: clone the method's repo, build its venv, and author a script.
+"""Staged Adapt pipeline: acquire, plan, build, inspect, author, and validate.
 
-ReAct loop that:
+Bounded stages:
   1. Clones the method repo into .venvs/<method_id>/repo/ and reads its README
      locally (full tree, no GitHub API rate limits).
   2. Builds a method-specific venv at .venvs/<method_id>/ and runs the repo's
@@ -12,7 +12,7 @@ ReAct loop that:
   5. Inspects the cloned source locally to find an example entry point.
   6. Writes either a standalone script (importing the installed library) or a
      wrapper that subprocess-invokes the repo's example with filled-in args.
-  7. Validates via ast.parse + dry-import (stdlib-only wrappers pass trivially).
+  7. Validates syntax, imports, exact model/output references, and tune locks.
 
 Returns (script_path, script_code) — the orchestrator hands the code off to the
 executor, which launches it with .venvs/<method_id>/bin/python.
@@ -35,12 +35,12 @@ from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 
 from . import executor
+from .adapt_stages import AdaptPlanSession, AdaptTrace, make_write_adapt_plan_tool
 from .config import load_settings
 from .schemas import MethodCandidate
 from .tools import (
     clone_method_repo,
     fetch_model_config,
-    hf_model_info,
     install_method_venv,
     list_repo_dir,
     read_repo_file,
@@ -53,128 +53,58 @@ from .tools.script_io import ValidationSession, make_write_script_tool
 
 log = logging.getLogger(__name__)
 
-_PROMPT = """You are the Adapt agent. A quantization method has been chosen from the catalog
-and you must author a Python script that quantizes the user's model using that method's
-real implementation — cloned from its GitHub repo.
+_PLAN_PROMPT = """You are the repository-planning stage of a quantization adapter.
+The repository has already been cloned. Inspect its README and the minimum relevant
+source files, then call write_adapt_plan exactly once.
 
-Chosen method:
-  id:        {method_id}
-  name:      {method_name}
-  repo_url:  {repo_url}
-  bits:      {bits}
-  paper:     {arxiv_id}
-
-Hyperparameters (TUNE-LOCKED — must appear verbatim in the generated script as the
-configured values for this method's quantizer; do not substitute defaults). When this
-block reads "(none — use method defaults)", omit explicit hyperparameter args and let
-the method's own defaults apply.
-{hyperparameters_block}
-
+Method: {method_name} ({method_id})
+Repository: .venvs/{method_id}/repo/
 Target model: {model_id}
-Output script path: {script_path}
-Output model directory (save the quantized weights EXACTLY here — nowhere else): {output_dir}
 
-Per-method paths (created by the tools below):
-  venv:       .venvs/{method_id}/            (python at .venvs/{method_id}/bin/python)
-  cloned repo: .venvs/{method_id}/repo/
+Determine only:
+1. method-specific pip/python install steps (baseline Torch/Transformers packages are
+   installed separately; never repeat them),
+2. whether the final script should use a stable standalone Python API or wrap a real
+   repository entrypoint,
+3. the repository-relative entrypoint when wrapper style is selected,
+4. the files that prove these choices.
 
-Workflow — follow in order:
-
-  1. clone_method_repo(method_id="{method_id}", repo_url="{repo_url}")
-     Clones the FULL repo to .venvs/{method_id}/repo/ (idempotent). Then read the
-     README locally to learn install + usage:
-       read_repo_file(method_id="{method_id}", path="README.md")
-     (try README.rst / docs/ if there is no README.md).
-
-  2. Identify `install_steps` from the README. Examples:
-        Research repos:     ["pip install -r requirements.txt", "pip install -e ."]
-                            or ["pip install -e ."]
-        Pip-packaged libs:  ["pip install autoawq"]   (for awq)
-                            ["pip install gptqmodel datasets"]   (for gptq)
-                            ["pip install hqq"]   (for hqq)
-                            ["pip install bitsandbytes"]   (for bnb_nf4/bnb_llm_int8)
-     A baseline of torch==2.3.1 (cu121) + transformers + accelerate + safetensors +
-     sentencepiece is ALWAYS installed first. Do NOT duplicate those in install_steps.
-
-  3. install_method_venv(method_id="{method_id}", install_steps=[...])
-     Creates the venv and runs the steps. If it errors:
-       - Read the last stderr lines carefully.
-       - Adjust install_steps (add a missing dep, drop an optional broken step).
-       - Retry ONCE. If it still fails, write a best-effort script anyway — the
-         executor will surface the real error at runtime.
-
-  4. Learn the TARGET model's architecture BEFORE writing the quantizer config:
-       fetch_model_config(model_id="{model_id}")
-         Full config.json — read num_key_value_heads (GQA), intermediate_size,
-         tie_word_embeddings, MoE/rope fields, and trust_remote_code_required.
-       inspect_model_architecture()
-         Instantiates {model_id} on the meta device (no weight download) inside
-         THIS method's venv and returns the exact module tree (Linear/Embedding
-         names + shapes, collapsed across repeated layers). Use these REAL module
-         names whenever the method needs a layer target/skip map — do not guess
-         layer names. (Requires the venv from step 3; if trust_remote_code is
-         required and not granted it returns a config-only summary.)
-
-  5. If the repo's README/examples are thin or the algorithm/hyperparameters are
-     unclear, consult the method's paper:
-       read_paper(section="method")   (or read_paper() for the whole paper;
-       other useful sections: "quantization", "experiments", "algorithm")
-
-  6. Find the example entry point in the cloned repo:
-       list_repo_dir(method_id="{method_id}", path="examples")
-       list_repo_dir(method_id="{method_id}", path="scripts")
-       list_repo_dir(method_id="{method_id}", path="")   (if needed)
-     Then read_repo_file on 1–2 most-likely entry files to see their API.
-
-  7. (Optional but recommended) run_in_venv(method_id="{method_id}",
-        command="python <entry_path> --help") to confirm the entry is invokable
-     and to discover the real arg flag names.
-
-  8. Decide the script style and write it via
-     write_script(path="{script_path}", code=...):
-
-     STYLE A — Standalone import (preferred when the method has a stable Python API,
-     e.g. autoawq, gptqmodel, hqq, bitsandbytes, or an importable module in the
-     cloned repo). Write a single Python file that imports the library and runs
-     quantization in-process. Must load the model from HF by id `{model_id}` and
-     save output to EXACTLY this directory: {output_dir}
-
-     STYLE B — Wrapper subprocess (preferred for research repos whose usage is
-     "python examples/foo.py --model ..."). Write a Python file that:
-        - import sys, os, subprocess, pathlib
-        - Reads HF_TOKEN from env (HUGGINGFACE_HUB_TOKEN or HF_TOKEN) and passes it
-          into the child env.
-        - Computes REPO = pathlib.Path(".venvs/{method_id}/repo").resolve()
-        - Builds the child env by forwarding ONLY PATH plus the HF token — do NOT
-          splat the whole os.environ into the child:
-            hf = os.environ.get("HUGGINGFACE_HUB_TOKEN") or os.environ.get("HF_TOKEN") or ""
-            child = {{"PATH": os.environ.get("PATH", "")}}
-            if hf: child["HUGGINGFACE_HUB_TOKEN"] = child["HF_TOKEN"] = hf
-        - subprocess.run([sys.executable, "<entry_path_relative_to_repo>",
-                          "<flag_name>", "{model_id}", "<output_flag>", str(OUT)],
-                          cwd=REPO, env=child, check=True)
-        - OUT = pathlib.Path("{output_dir}").resolve()
-        - The EXACT flag names MUST come from the --help output or the example source
-          you read — do NOT invent flag names.
-
-     Both styles must:
-       - Quantize the real model at `{model_id}`.
-       - Handle HF gated models: read HF_TOKEN from env and pass to every loader/
-         tokenizer call (or login()) and into the child env for wrapper style.
-       - trust_remote_code: pass trust_remote_code={trust_remote_code} to every
-         from_pretrained / AutoConfig / AutoModel loader. This model's config
-         {trust_hint}. Do not override what fetch_model_config reported.
-       - Print a final line with the quantized model's on-disk size so success is
-         visible in stdout.
-       - Begin the script with a header comment block:
-            # TUNE-LOCKED HYPERPARAMETERS (do not modify in fix_agent):
-            # <one line per name=value from the hyperparameters block above>
-         When no hyperparameters are supplied, omit the block.
-
-Stop as soon as write_script returns status="ok". Do not call run_in_venv on the
-wrapper itself — the executor will launch it.
+Commands must be accepted by the restricted installer: python/python3/pip/pip3 only;
+no shell operators, redirects, curl, wget, arbitrary executables, or environment
+assignments other than TORCH_CUDA_ARCH_LIST/MAX_JOBS. Do not install or execute code in
+this stage. Stop after write_adapt_plan returns status=ok.
 """
 
+_AUTHOR_PROMPT = """You are the script-authoring stage of a quantization adapter.
+Acquisition, environment construction, and model architecture inspection have already
+completed. Do not repeat them. Use the repository-derived plan and architecture facts
+below to write one executable script via write_script.
+
+Method: {method_name} ({method_id}), {bits}-bit
+Repository: .venvs/{method_id}/repo/
+Paper: {arxiv_id}
+Target model: {model_id}
+Output script: {script_path}
+Exact output model directory: {output_dir}
+trust_remote_code={trust_remote_code}
+
+Repository plan:
+{adapt_plan}
+
+Model config and architecture evidence:
+{architecture_evidence}
+
+Tune-locked hyperparameters:
+{hyperparameters_block}
+
+For standalone style, use the real installed API verified in repository source. For
+wrapper style, invoke only the plan's repository-relative entrypoint with exact flags
+verified from source or `python <entrypoint> --help`. Forward only PATH and an optional
+HF token to child processes. Every Hugging Face loader must use the target model and
+trust_remote_code value above. Save weights exactly to the requested output directory,
+print final on-disk size, and include tune-locked values in code and header comments.
+Stop immediately after write_script returns status=ok.
+"""
 
 def _format_hyperparameters_block(hyperparameters: dict | None) -> str:
     if not hyperparameters:
@@ -193,6 +123,16 @@ def _catalog_arxiv_id(method_id: str) -> str | None:
 
 def _safe_slug(s: str) -> str:
     return re.sub(r"[^a-zA-Z0-9._-]+", "_", s).strip("_")
+
+
+def _tool_payload(raw: str, operation: str) -> dict:
+    try:
+        payload = json.loads(raw)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"{operation} returned invalid JSON") from exc
+    if payload.get("status") != "ok":
+        raise RuntimeError(f"{operation} failed: {payload.get('error') or payload}")
+    return payload
 
 
 def run(
@@ -239,10 +179,10 @@ def run(
     script_path = out_dir / f"quantize_{_safe_slug(model_id)}_{method.id}{suffix}.py"
     attempt_path = out_dir / f".{script_path.name}.{secrets.token_hex(6)}.tmp"
 
-    session = ValidationSession(method_id=method.id, allowed_root=out_dir)
-    write_script = make_write_script_tool(session)
-
     arxiv_id = _catalog_arxiv_id(method.id)
+    trace = AdaptTrace(model_id=model_id, method_id=method.id)
+    trace_path = script_path.with_suffix(".adapt.json")
+    trace.record("prepare", "completed", script_path=str(script_path), output_dir=output_dir)
 
     @tool
     def read_paper(section: str | None = None) -> str:
@@ -251,83 +191,129 @@ def run(
         Use this when the repo README/examples don't make the API or hyperparameters clear."""
         return read_paper_text(arxiv_id, section=section)
 
-    @tool
-    def inspect_model_architecture() -> str:
-        """Instantiate the target model on the meta device (no weight download) inside this
-        method's venv and return its exact module tree — Linear/Embedding layer names and
-        shapes, collapsed across repeated blocks. This is the ground truth for which layers
-        the quantizer targets; call it AFTER install_method_venv and use the real names."""
-        return inspect_architecture_core(
-            model_id, method.id, trust_remote_code=trust_remote_code
-        )
-
-    tools = [
-        clone_method_repo,
-        install_method_venv,
-        run_in_venv,
-        list_repo_dir,
-        read_repo_file,
-        fetch_model_config,
-        inspect_model_architecture,
-        read_paper,
-        hf_model_info,
-        write_script,
-    ]
-
     llm = ChatAnthropic(model=s.model, api_key=s.anthropic_api_key, temperature=0)
-    trust_hint = (
-        "ships custom modeling code (auto_map present), so trust_remote_code IS required"
-        if trust_remote_code
-        else "uses a standard transformers architecture, so trust_remote_code is NOT needed"
-    )
-    prompt = _PROMPT.format(
-        method_id=method.id,
-        method_name=method.name,
-        repo_url=method.repo_url,
-        bits=method.bits,
-        arxiv_id=arxiv_id or "(none on file — rely on the repo)",
-        hyperparameters_block=_format_hyperparameters_block(hyperparameters),
-        model_id=model_id,
-        script_path=str(attempt_path),
-        output_dir=output_dir,
-        trust_remote_code=trust_remote_code,
-        trust_hint=trust_hint,
-    )
-    agent = create_react_agent(llm, tools, prompt=prompt)
-
-    user_msg = (
-        f"Port {model_id} to {method.name} ({method.bits}-bit). "
-        f"Clone the repo, build the venv, write the script to {attempt_path}."
-    )
-    if previous_error is not None:
-        user_msg += (
-            f"\n\nThis is a RETRY. The previous attempt failed with: {previous_error}. "
-            "Diagnose the root cause and change your approach — do not repeat the "
-            "same tool sequence."
+    try:
+        trace.record("acquire", "started")
+        clone = _tool_payload(clone_method_repo.invoke({
+            "method_id": method.id, "repo_url": method.repo_url,
+        }), "repository acquisition")
+        trace.record(
+            "acquire", "completed", commit_sha=clone.get("commit_sha"),
+            already_present=clone.get("already_present", False),
         )
 
-    try:
-        agent.invoke(
-            {"messages": [("user", user_msg)]},
+        trace.record("plan", "started")
+        plan_session = AdaptPlanSession()
+        write_adapt_plan = make_write_adapt_plan_tool(plan_session)
+        plan_agent = create_react_agent(
+            llm,
+            [list_repo_dir, read_repo_file, read_paper, write_adapt_plan],
+            prompt=_PLAN_PROMPT.format(
+                method_id=method.id, method_name=method.name, model_id=model_id,
+            ),
+        )
+        plan_message = "Inspect the cloned repository and finalize the Adapt plan."
+        if previous_error is not None:
+            plan_message += (
+                f" Previous attempt failed with {previous_error}; choose a materially "
+                "different repository-supported plan."
+            )
+        plan_agent.invoke(
+            {"messages": [("user", plan_message)]},
             config={"recursion_limit": 60},
         )
-    except Exception:
+        if plan_session.plan is None:
+            raise RuntimeError("planning stage finished without write_adapt_plan")
+        plan = plan_session.plan
+        trace.record("plan", "completed", plan=plan.model_dump())
+
+        trace.record("environment", "started")
+        install = _tool_payload(install_method_venv.invoke({
+            "method_id": method.id,
+            "install_steps": plan.install_steps,
+        }), "environment construction")
+        trace.record("environment", "completed", python=install.get("python"))
+
+        trace.record("architecture", "started")
+        config_raw = fetch_model_config.invoke({"model_id": model_id})
+        try:
+            config_payload = json.loads(config_raw)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("model config stage returned invalid JSON") from exc
+        if config_payload.get("error"):
+            raise RuntimeError(f"model config stage failed: {config_payload['error']}")
+        architecture_raw = inspect_architecture_core(
+            model_id, method.id, trust_remote_code=trust_remote_code
+        )
+        try:
+            architecture_payload = json.loads(architecture_raw)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("architecture stage returned invalid JSON") from exc
+        trace.record(
+            "architecture", "completed",
+            architectures=config_payload.get("architectures"),
+            trust_remote_code_required=config_payload.get("trust_remote_code_required"),
+            introspection_status=architecture_payload.get("status"),
+        )
+
+        trace.record("generate", "started")
+        session = ValidationSession(
+            method_id=method.id,
+            allowed_root=out_dir,
+            expected_model_id=model_id,
+            expected_output_dir=output_dir,
+            locked_hyperparameters=hyperparameters,
+        )
+        write_script = make_write_script_tool(session)
+        architecture_evidence = json.dumps({
+            "config": config_payload,
+            "module_tree": architecture_payload,
+        }, indent=2)
+        author_agent = create_react_agent(
+            llm,
+            [run_in_venv, list_repo_dir, read_repo_file, read_paper, write_script],
+            prompt=_AUTHOR_PROMPT.format(
+                method_id=method.id,
+                method_name=method.name,
+                bits=method.bits,
+                arxiv_id=arxiv_id or "(none)",
+                model_id=model_id,
+                script_path=str(attempt_path),
+                output_dir=output_dir,
+                trust_remote_code=trust_remote_code,
+                adapt_plan=plan.model_dump_json(indent=2),
+                architecture_evidence=architecture_evidence,
+                hyperparameters_block=_format_hyperparameters_block(hyperparameters),
+            ),
+        )
+        author_agent.invoke(
+            {"messages": [("user", "Author and validate the quantization script now.")]},
+            config={"recursion_limit": 40},
+        )
+        trace.record("generate", "completed")
+
+        expected = attempt_path.resolve()
+        if session.validated_path is None or session.validated_path.resolve() != expected:
+            raise RuntimeError(
+                "authoring stage finished without producing a validated artifact in this session"
+            )
+        if not attempt_path.exists():
+            raise RuntimeError(f"validated Adapt artifact disappeared: {attempt_path}")
+        trace.record("validate", "completed", path=str(expected))
+
+        os.replace(attempt_path, script_path)
+        trace.record("promote", "completed", path=str(script_path))
+        trace.persist(trace_path)
+    except Exception as exc:
+        # A failed run never promotes a script, but its bounded-stage trace remains
+        # available next to the intended output for diagnosis and reproducibility.
+        failed_stage = next(
+            (r.name for r in reversed(trace.stages) if r.status == "started"), "prepare"
+        )
+        trace.record(failed_stage, "failed", error_type=type(exc).__name__, error=str(exc))
+        trace.persist(trace_path)
         if attempt_path.exists():
             attempt_path.unlink()
         raise
-
-    expected = attempt_path.resolve()
-    if session.validated_path is None or session.validated_path.resolve() != expected:
-        if attempt_path.exists():
-            attempt_path.unlink()
-        raise RuntimeError(
-            "Adapt agent finished without producing a validated artifact in this session. "
-            "Check the agent's final write_script result."
-        )
-    if not attempt_path.exists():
-        raise RuntimeError(f"validated Adapt artifact disappeared before promotion: {attempt_path}")
-
-    # Atomic promotion ensures a failed attempt cannot corrupt a previous good script.
-    os.replace(attempt_path, script_path)
     code = script_path.read_text()
     return str(script_path), code

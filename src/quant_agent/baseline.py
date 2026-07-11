@@ -20,9 +20,11 @@ import subprocess
 from pathlib import Path
 
 from .config import REPO_ROOT, child_env, require_host_execution
-from .measurement import run_measurement
+from .measurement import BENCHMARK_VERSION, run_measurement
 from .pareto import Metrics
 from .tools.torch_spec import detect_torch_spec
+from .runtime_deps import RUNTIME_PACKAGES
+from .io_utils import atomic_write_text
 
 log = logging.getLogger(__name__)
 
@@ -65,28 +67,33 @@ def _ensure_venv() -> Path:
 
     spec = detect_torch_spec()
     steps = [
-        "pip install --upgrade pip wheel",
-        spec.pip_install(),
-        "pip install transformers accelerate safetensors sentencepiece datasets",
+        [str(py), "-m", "pip", "install", "--upgrade", "pip", "wheel"],
+        spec.pip_install_argv(str(py)),
+        [str(py), "-m", "pip", "install", *RUNTIME_PACKAGES],
     ]
-    activate = f"source {vd}/bin/activate"
     for step in steps:
-        cmd = f"{activate} && {step}"
         r = subprocess.run(
-            ["bash", "-lc", cmd],
+            step,
             capture_output=True, text=True, timeout=900,
             env=child_env(include_hf=False),
         )
         if r.returncode != 0:
             raise RuntimeError(
-                f"fp16 venv install step failed ({step!r}): "
+                f"fp16 venv install step failed ({' '.join(step)!r}): "
                 f"{(r.stderr or r.stdout)[-1500:]}"
             )
     return py
 
 
 def _cache_key(model_id: str, instance_type: str | None) -> str:
-    return f"{model_id}::{instance_type or 'unknown'}"
+    spec = detect_torch_spec()
+    overrides = ",".join(
+        f"{k}={os.environ[k]}" for k in sorted(os.environ) if k.startswith("MEASURE_")
+    )
+    return (
+        f"{model_id}::{instance_type or 'unknown'}::bench={BENCHMARK_VERSION}::"
+        f"{spec.torch_pin}::{spec.cuda_tag}::{overrides}"
+    )
 
 
 def _load_cache() -> dict[str, dict]:
@@ -101,8 +108,7 @@ def _load_cache() -> dict[str, dict]:
 
 def _save_cache(cache: dict[str, dict]) -> None:
     try:
-        _CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _CACHE_PATH.write_text(json.dumps(cache, indent=2, sort_keys=True))
+        atomic_write_text(_CACHE_PATH, json.dumps(cache, indent=2, sort_keys=True))
     except OSError as e:
         log.warning("fp16 baseline cache write failed: %s", e)
 
@@ -126,13 +132,8 @@ def measure_fp16_baseline(
     if use_cache and key in cache:
         d = cache[key]
         try:
-            return Metrics(
-                prefill_ms=float(d["prefill_ms"]),
-                decode_ms=float(d["decode_ms"]),
-                vram_gb=float(d["vram_gb"]),
-                ppl=float(d["ppl"]),
-            )
-        except (KeyError, ValueError) as e:
+            return Metrics.from_dict(d)
+        except (KeyError, TypeError, ValueError) as e:
             log.warning("fp16 cache entry %s invalid (%s); re-measuring", key, e)
 
     py = _ensure_venv()
@@ -141,6 +142,7 @@ def measure_fp16_baseline(
         model_path=model_id,
         venv_python=py,
         timeout_s=timeout_s,
+        dtype="float16",
     )
 
     cache[key] = metrics.to_dict()

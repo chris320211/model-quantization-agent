@@ -30,8 +30,14 @@ import typer
 from . import adapt_agent, baseline, executor, fix_agent, research_agent
 from .executor import JOBS_ROOT, JobMeta
 from .hyperparam_inference import default_config, infer_ranges
-from .measurement import metrics_summary, run_measurement
-from .pareto import Metrics, best_so_far, detect_stagnation, is_pareto_improvement
+from .measurement import metrics_summary, require_measurement_adapter, run_measurement
+from .pareto import (
+    Metrics,
+    best_so_far,
+    detect_stagnation,
+    is_pareto_improvement,
+    pareto_frontier,
+)
 from .schemas import MethodCandidate, ResearchReport
 from .tools.executor_tools import execute_quantization
 from . import tune_agent, tune_history
@@ -302,6 +308,7 @@ def _measure_job(meta: JobMeta) -> Metrics | None:
         log.warning("venv missing for measure: %s", venv_py)
         return None
     try:
+        require_measurement_adapter(meta.method_id)
         return run_measurement(
             job_dir=job_dir,
             model_path=meta.output_dir,
@@ -351,21 +358,22 @@ def _format_pareto_summary(
     method: MethodCandidate,
     history: list[tune_agent.IterationRecord],
     fp16: Metrics | None,
-    best_iter: int | None,
+    frontier_iters: set[int],
 ) -> str:
     lines = [""]
     lines.append(f"=== Tune summary: {method.name} ({method.id}) ===")
     if fp16 is not None:
         lines.append(f"fp16 baseline:  {metrics_summary(fp16)}")
     for i, r in enumerate(history, start=1):
-        marker = "*" if best_iter == i else " "
+        marker = "*" if i in frontier_iters else " "
         if r.metrics is None:
             lines.append(f" {marker} iter {i}: crashed   hp={r.hyperparameters}")
         else:
             lines.append(f" {marker} iter {i}: {metrics_summary(r.metrics)}   hp={r.hyperparameters}")
-    if best_iter is not None and history[best_iter - 1].metrics is not None:
-        winner = history[best_iter - 1]
-        lines.append(f"Best config: iter {best_iter}  {winner.hyperparameters}")
+    if frontier_iters:
+        lines.append(
+            "Pareto frontier: " + ", ".join(f"iter {i}" for i in sorted(frontier_iters))
+        )
     return "\n".join(lines)
 
 
@@ -420,7 +428,8 @@ def _tune_loop(
 
     for iteration in range(2, max_tune_iter + 1):
         metrics_history = [r.metrics for r in history if r.metrics is not None]
-        running_best = best_so_far(metrics_history)
+        running_frontier = pareto_frontier(metrics_history)
+        running_best = running_frontier[-1] if running_frontier else None
 
         decision = tune_agent.propose(
             method=method,
@@ -429,6 +438,7 @@ def _tune_loop(
             best_so_far=running_best,
             fp16_baseline=fp16,
             prior_wins=prior_wins,
+            pareto_frontier=running_frontier,
         )
         if decision.decision == "stop":
             typer.echo(f"\n[tune] tune_agent stopped: {decision.reason}", err=True)
@@ -570,14 +580,14 @@ def _prune_intermediate_jobs(
     if len(real_idx) <= 1:
         return
     metrics_only = [r.metrics for r in history if r.metrics is not None]
-    best = best_so_far(metrics_only)
+    frontier = pareto_frontier(metrics_only)
     keep_idx: set[int] = {real_idx[-1]}  # latest real iteration
 
-    if best is not None:
+    if frontier:
         for i, r in enumerate(history):
-            if r.metrics is best and i < len(iter_metas) and iter_metas[i] is not None:
+            if r.metrics is not None and any(r.metrics is point for point in frontier) \
+                    and i < len(iter_metas) and iter_metas[i] is not None:
                 keep_idx.add(i)
-                break
 
     for i in real_idx:
         if i in keep_idx:
@@ -595,23 +605,23 @@ def _finalize_loop(
     instance_type: str | None,
 ) -> str:
     metrics_only = [r.metrics for r in history if r.metrics is not None]
-    best = best_so_far(metrics_only)
-    best_iter: int | None = None
-    if best is not None:
-        for i, r in enumerate(history, start=1):
-            if r.metrics is best:
-                best_iter = i
-                break
+    frontier = pareto_frontier(metrics_only)
+    frontier_iters: set[int] = set()
+    for i, r in enumerate(history, start=1):
+        if r.metrics is not None and any(r.metrics is point for point in frontier):
+            frontier_iters.add(i)
 
     summary = _format_pareto_summary(
-        method=method, history=history, fp16=fp16, best_iter=best_iter,
+        method=method, history=history, fp16=fp16, frontier_iters=frontier_iters,
     )
 
     # If the running best beat fp16 across all metrics, surface that prominently.
-    if best is not None and fp16 is not None and is_pareto_improvement(fp16, best):
-        summary += "\nResult: Pareto-improves over fp16 baseline."
-    elif best is not None and fp16 is not None:
-        summary += "\nResult: did not Pareto-improve over fp16."
+    if frontier and fp16 is not None and any(
+        is_pareto_improvement(fp16, point) for point in frontier
+    ):
+        summary += "\nResult: at least one frontier config Pareto-improves over fp16 baseline."
+    elif frontier and fp16 is not None:
+        summary += "\nResult: no frontier config Pareto-improved over fp16."
 
     return summary
 
@@ -631,6 +641,7 @@ def _run_core(
     auto_tune: bool = False,
     max_tune_iter: int = 5,
     stagnate_after: int = 2,
+    fallback_candidates: bool = False,
 ) -> str:
     """Research → pick → Adapt → execute → (optional) tune.
 
@@ -648,7 +659,9 @@ def _run_core(
     if idx is None:
         return "aborted"
 
-    order = [idx - 1] + [i for i in range(len(report.methods)) if i != idx - 1]
+    order = [idx - 1]
+    if fallback_candidates:
+        order.extend(i for i in range(len(report.methods)) if i != idx - 1)
 
     last_error: Exception | None = None
     for pos, i in enumerate(order):
@@ -689,15 +702,18 @@ def _run_core(
         if "error" in job or "job_id" not in job:
             return handoff
 
-        if max_repairs <= 0:
+        if max_repairs <= 0 and not tune:
             return handoff
-
-        final, chain = _supervise(
-            initial_job_id=job["job_id"],
-            chosen=chosen,
-            model_id=report.resolved_model_id,
-            max_repairs=max_repairs,
-        )
+        if max_repairs <= 0:
+            final = executor.wait_for_job(job["job_id"])
+            chain = [final]
+        else:
+            final, chain = _supervise(
+                initial_job_id=job["job_id"],
+                chosen=chosen,
+                model_id=report.resolved_model_id,
+                max_repairs=max_repairs,
+            )
         trail = _format_supervise_trail(chain)
 
         if final.status != "completed" or not tune:
@@ -760,6 +776,7 @@ def run(
     max_tune_iter: int = 5,
     stagnate_after: int = 2,
     allow_unsafe_host_execution: bool = False,
+    fallback_candidates: bool = False,
 ) -> str:
     """Run the pipeline under an explicit host-execution policy."""
     with host_execution_policy(allow_unsafe_host_execution):
@@ -772,4 +789,5 @@ def run(
             auto_tune=auto_tune,
             max_tune_iter=max_tune_iter,
             stagnate_after=stagnate_after,
+            fallback_candidates=fallback_candidates,
         )

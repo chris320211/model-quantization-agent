@@ -9,10 +9,9 @@ the quantization step. This module provides:
   - run_measurement(...): writes the script, runs it, parses the JSON it emits.
   - load_metrics(job_dir): convenience reader for jobs/<id>/metrics.json.
 
-The script is intentionally HF-loader-centric: ``AutoModelForCausalLM`` plus
-``trust_remote_code=True`` covers the bulk of method outputs (GPTQ via
-auto-gptq, AWQ via autoawq, bnb_nf4, fp16 baseline). Method-specific overrides
-get emitted by the adapt agent if the README mandates a custom load path.
+The canonical adapter is intentionally HuggingFace-loader-centric. Tuning is
+enabled only for methods listed in ``GENERIC_HF_METHODS``; other formats fail
+clearly until a validated method-specific loader adapter is implemented.
 """
 from __future__ import annotations
 
@@ -28,6 +27,28 @@ from .config import child_env, require_host_execution
 from .pareto import Metrics
 
 log = logging.getLogger(__name__)
+
+BENCHMARK_VERSION = "2"
+
+# These methods persist a Transformers-compatible directory that the canonical
+# AutoModel loader can reopen. Other catalog formats require a future explicit
+# adapter and are rejected rather than measured through a misleading generic path.
+GENERIC_HF_METHODS = frozenset({
+    "awq", "gptq", "bnb_nf4", "bnb_llm_int8", "hqq", "autoround", "fp8",
+    "smoothquant",
+})
+
+
+class UnsupportedMeasurementAdapter(RuntimeError):
+    pass
+
+
+def require_measurement_adapter(method_id: str) -> None:
+    if method_id not in GENERIC_HF_METHODS:
+        raise UnsupportedMeasurementAdapter(
+            f"measurement is not configured for method {method_id!r}; "
+            "add a validated loader adapter before enabling tuning"
+        )
 
 
 @dataclass(frozen=True)
@@ -63,6 +84,8 @@ Env vars:
   MEASURE_STRIDE       sliding window stride for ppl (default: 512)
   MEASURE_TRUST_REMOTE_CODE  "1" to allow executing a model repo's custom code
                              (default: off — only enable for models you trust)
+  MEASURE_REPEATS     measured trials (default: 5)
+  MEASURE_DTYPE       float16 | bfloat16 | auto (default: float16)
 """
 from __future__ import annotations
 
@@ -70,6 +93,7 @@ import gc
 import json
 import math
 import os
+import statistics
 import sys
 import time
 
@@ -83,24 +107,39 @@ def _now_ms() -> float:
     return time.perf_counter() * 1000.0
 
 
-def _prefill_decode(model, tokenizer, prompt_len: int, decode_len: int) -> dict:
+def _input_device(model):
+    return model.get_input_embeddings().weight.device
+
+
+def _tokenized(model, tokenizer, prompt_len: int):
     text = "Hello, " * (prompt_len * 2)
     inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=prompt_len)
-    inputs = {k: v.to(model.device) for k, v in inputs.items()}
+    return {k: v.to(_input_device(model)) for k, v in inputs.items()}
+
+
+def _prefill_once(model, tokenizer, prompt_len: int) -> float:
+    inputs = _tokenized(model, tokenizer, prompt_len)
+    with torch.inference_mode():
+        t0 = _now_ms()
+        model(**inputs, use_cache=True)
+        return _now_ms() - t0
+
+
+def _decode_once(model, tokenizer, prompt_len: int, decode_len: int) -> float:
+    """Median-friendly steady-state decode probe in milliseconds per token."""
+    inputs = _tokenized(model, tokenizer, prompt_len)
 
     with torch.inference_mode():
-        # warm
-        _ = model.generate(**inputs, max_new_tokens=4, do_sample=False, use_cache=True)
-
+        first = model(**inputs, use_cache=True)
+        past = first.past_key_values
+        next_token = first.logits[:, -1:, :].argmax(dim=-1)
         t0 = _now_ms()
-        out = model.generate(
-            **inputs, max_new_tokens=decode_len, do_sample=False, use_cache=True,
-            pad_token_id=tokenizer.eos_token_id or 0,
-        )
-        t1 = _now_ms()
-    elapsed = t1 - t0
-    new_tokens = max(int(out.shape[-1] - inputs["input_ids"].shape[-1]), 1)
-    return {"elapsed_ms": elapsed, "new_tokens": new_tokens}
+        for _ in range(decode_len):
+            out = model(input_ids=next_token, past_key_values=past, use_cache=True)
+            past = out.past_key_values
+            next_token = out.logits[:, -1:, :].argmax(dim=-1)
+        elapsed = _now_ms() - t0
+    return elapsed / max(decode_len, 1)
 
 
 def _measure_perplexity(model, tokenizer, dataset_name: str, max_length: int, stride: int) -> float:
@@ -111,7 +150,7 @@ def _measure_perplexity(model, tokenizer, dataset_name: str, max_length: int, st
     )
     text = "\n\n".join(ds["text"])
     encodings = tokenizer(text, return_tensors="pt")
-    input_ids = encodings.input_ids.to(model.device)
+    input_ids = encodings.input_ids.to(_input_device(model))
     seq_len = input_ids.size(1)
 
     nlls: list[float] = []
@@ -143,6 +182,8 @@ def main() -> int:
     dataset_name = os.environ.get("MEASURE_DATASET", "wikitext-2-raw-v1")
     max_length = int(os.environ.get("MEASURE_MAX_LENGTH", "2048"))
     stride = int(os.environ.get("MEASURE_STRIDE", "512"))
+    repeats = max(int(os.environ.get("MEASURE_REPEATS", "5")), 1)
+    dtype_name = os.environ.get("MEASURE_DTYPE", "float16")
 
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA GPU required for measurement")
@@ -152,39 +193,64 @@ def main() -> int:
     trust = os.environ.get("MEASURE_TRUST_REMOTE_CODE") == "1"
 
     torch.cuda.reset_peak_memory_stats()
+    dtypes = {"float16": torch.float16, "bfloat16": torch.bfloat16, "auto": "auto"}
+    if dtype_name not in dtypes:
+        raise ValueError(f"unsupported MEASURE_DTYPE={dtype_name!r}")
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=trust)
     model = AutoModelForCausalLM.from_pretrained(
-        model_path, trust_remote_code=trust, device_map="cuda", torch_dtype="auto",
+        model_path, trust_remote_code=trust, device_map="auto", torch_dtype=dtypes[dtype_name],
     )
     model.eval()
 
-    prefill = _prefill_decode(model, tokenizer, prompt_len=2048, decode_len=128)
-    decode = _prefill_decode(model, tokenizer, prompt_len=32, decode_len=512)
+    # One untimed warm-up, then repeated independent trials.
+    _prefill_once(model, tokenizer, prompt_len=32)
+    prefill_samples = [_prefill_once(model, tokenizer, prompt_len=2048) for _ in range(repeats)]
+    decode_samples = [
+        _decode_once(model, tokenizer, prompt_len=32, decode_len=128)
+        for _ in range(repeats)
+    ]
+    prefill_ms = statistics.median(prefill_samples)
+    decode_ms = statistics.median(decode_samples)
 
     vram_gb = torch.cuda.max_memory_allocated() / (1024**3)
 
     ppl = _measure_perplexity(model, tokenizer, dataset_name, max_length, stride)
 
     metrics = {
-        "prefill_ms": prefill["elapsed_ms"],
-        "decode_ms": decode["elapsed_ms"],
+        "prefill_ms": prefill_ms,
+        "decode_ms": decode_ms,
         "vram_gb": vram_gb,
         "ppl": ppl,
+        "prefill_std_ms": statistics.pstdev(prefill_samples),
+        "decode_std_ms": statistics.pstdev(decode_samples),
+        "samples": repeats,
         "details": {
-            "prefill_probe": prefill,
-            "decode_probe": decode,
+            "prefill_samples_ms": prefill_samples,
+            "decode_samples_ms_per_token": decode_samples,
+            "prefill_prompt_tokens": 2048,
+            "decode_prompt_tokens": 32,
+            "decode_tokens_per_trial": 128,
             "model_path": model_path,
             "dataset": dataset_name,
             "max_length": max_length,
             "stride": stride,
+            "dtype": dtype_name,
+            "benchmark_version": "2",
         },
     }
-    with open(output_json, "w") as f:
+    output_tmp = output_json + ".tmp"
+    with open(output_tmp, "w") as f:
         json.dump(metrics, f, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(output_tmp, output_json)
 
     # Sentinel line the parent process greps for in stdout.
     print("MEASUREMENT_RESULT=" + json.dumps(
-        {k: metrics[k] for k in ("prefill_ms", "decode_ms", "vram_gb", "ppl")}
+        {k: metrics[k] for k in (
+            "prefill_ms", "decode_ms", "vram_gb", "ppl",
+            "prefill_std_ms", "decode_std_ms", "samples",
+        )}
     ))
 
     del model
@@ -216,6 +282,8 @@ def run_measurement(
     model_path: str,
     venv_python: Path,
     timeout_s: int = 1800,
+    repeats: int = 5,
+    dtype: str = "float16",
 ) -> Metrics:
     """Run the measurement script in the given venv. Returns parsed Metrics.
 
@@ -236,6 +304,8 @@ def run_measurement(
             **measure_overrides,
             "MEASURE_MODEL_PATH": str(model_path),
             "MEASURE_OUTPUT_JSON": str(output_json),
+            "MEASURE_REPEATS": str(max(repeats, 1)),
+            "MEASURE_DTYPE": dtype,
         },
         include_hf=True,
     )
@@ -258,12 +328,7 @@ def run_measurement(
         )
 
     payload = json.loads(output_json.read_text())
-    return Metrics(
-        prefill_ms=float(payload["prefill_ms"]),
-        decode_ms=float(payload["decode_ms"]),
-        vram_gb=float(payload["vram_gb"]),
-        ppl=float(payload["ppl"]),
-    )
+    return Metrics.from_dict(payload)
 
 
 def load_metrics(job_dir: Path) -> Metrics | None:
@@ -273,13 +338,8 @@ def load_metrics(job_dir: Path) -> Metrics | None:
         return None
     try:
         d = json.loads(p.read_text())
-        return Metrics(
-            prefill_ms=float(d["prefill_ms"]),
-            decode_ms=float(d["decode_ms"]),
-            vram_gb=float(d["vram_gb"]),
-            ppl=float(d["ppl"]),
-        )
-    except (json.JSONDecodeError, KeyError, ValueError) as e:
+        return Metrics.from_dict(d)
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
         log.warning("metrics.json parse failed: %s", e)
         return None
 
@@ -291,20 +351,15 @@ def parse_stdout_metrics(stdout: str) -> Metrics | None:
         return None
     try:
         d = json.loads(m.group(1))
-        return Metrics(
-            prefill_ms=float(d["prefill_ms"]),
-            decode_ms=float(d["decode_ms"]),
-            vram_gb=float(d["vram_gb"]),
-            ppl=float(d["ppl"]),
-        )
-    except (json.JSONDecodeError, KeyError, ValueError):
+        return Metrics.from_dict(d)
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
         return None
 
 
 def metrics_summary(m: Metrics) -> str:
     """Human-readable one-liner for stdout reports."""
     return (
-        f"prefill={m.prefill_ms:.1f}ms  decode={m.decode_ms:.1f}ms  "
+        f"prefill={m.prefill_ms:.1f}ms  decode={m.decode_ms:.2f}ms/token  "
         f"vram={m.vram_gb:.2f}GB  ppl={m.ppl:.3f}"
     )
 

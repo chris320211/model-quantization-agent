@@ -80,6 +80,9 @@ Iterations completed in THIS session (most recent last):
 Pareto-best so far this session:
 {best_json}
 
+Full non-dominated Pareto frontier this session:
+{frontier_json}
+
 Prior wins on the same (model, instance, method) from past sessions (warm-start hints —
 use as inspiration, not gospel; hardware/dataset state may have shifted):
 {prior_wins_json}
@@ -137,6 +140,7 @@ def propose(
     best_so_far: Metrics | None,
     fp16_baseline: Metrics | None,
     prior_wins: list[HistoryEntry],
+    pareto_frontier: list[Metrics] | None = None,
 ) -> TuneDecision:
     """Single LLM call. Returns a TuneDecision (propose or stop).
 
@@ -158,6 +162,9 @@ def propose(
         fp16_json=json.dumps(_serialize_metrics(fp16_baseline), indent=2),
         history_json=_serialize_history(history),
         best_json=json.dumps(_serialize_metrics(best_so_far), indent=2),
+        frontier_json=json.dumps(
+            [_serialize_metrics(m) for m in (pareto_frontier or [])], indent=2
+        ),
         prior_wins_json=_serialize_prior_wins(prior_wins),
     )
 
@@ -200,11 +207,28 @@ def _enforce_constraints(
                 decision="stop",
                 reason=f"proposed unknown knob {name!r}",
             )
+        type_ok = {
+            "bool": type(value) is bool,
+            "int": type(value) is int,
+            "float": type(value) in {int, float} and type(value) is not bool,
+            "categorical": True,
+        }[spec.type]
+        if not type_ok:
+            return TuneDecision(
+                decision="stop",
+                reason=f"proposed {name} has wrong type for {spec.type}: {type(value).__name__}",
+            )
         if value not in spec.values:
             return TuneDecision(
                 decision="stop",
                 reason=f"proposed {name}={value!r} not in allowed values {spec.values!r}",
             )
+
+    # Materialize a complete effective configuration so history, generated scripts,
+    # repair metadata, and duplicate detection all describe the same settings.
+    full = {name: spec.default for name, spec in by_name.items()}
+    full.update(decision.hyperparameters)
+    decision = decision.model_copy(update={"hyperparameters": full})
 
     for prior in history:
         if prior.hyperparameters == decision.hyperparameters:

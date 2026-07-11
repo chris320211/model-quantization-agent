@@ -40,12 +40,14 @@ def ask_cmd(
     max_repairs: int = typer.Option(
         3,
         "--max-repairs",
+        min=0,
         help="Runtime-failure repair attempts on the chosen method (0 disables).",
     ),
     max_adapt_retries: int = typer.Option(
         2,
         "--max-adapt-retries",
-        help="Same-method adapt-time retries before falling back to the next candidate.",
+        min=1,
+        help="Maximum same-method Adapt attempts (fallback requires --fallback-candidates).",
     ),
     tune: bool = typer.Option(
         False,
@@ -60,11 +62,13 @@ def ask_cmd(
     max_tune_iter: int = typer.Option(
         5,
         "--max-tune-iter",
+        min=1,
         help="Hard cap on tune iterations (including the baseline).",
     ),
     stagnate_after: int = typer.Option(
         2,
         "--stagnate-after",
+        min=1,
         help="Stop tuning after this many consecutive non-improvements.",
     ),
     allow_unsafe_host_execution: bool = typer.Option(
@@ -72,6 +76,11 @@ def ask_cmd(
         "--allow-unsafe-host-execution",
         "--unsafe-host",
         help="Acknowledge that third-party/generated code will run unsandboxed on this host.",
+    ),
+    fallback_candidates: bool = typer.Option(
+        False,
+        "--fallback-candidates",
+        help="After the selected method exhausts Adapt retries, try remaining candidates.",
     ),
 ) -> None:
     """Research → pick → Adapt → execute → (optional) closed-loop tuner."""
@@ -86,6 +95,7 @@ def ask_cmd(
             max_tune_iter=max_tune_iter,
             stagnate_after=stagnate_after,
             allow_unsafe_host_execution=allow_unsafe_host_execution,
+            fallback_candidates=fallback_candidates,
         )
     )
 

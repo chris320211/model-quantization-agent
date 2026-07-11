@@ -9,6 +9,7 @@ from quant_agent.pareto import (
     best_so_far,
     detect_stagnation,
     is_pareto_improvement,
+    pareto_frontier,
 )
 
 
@@ -88,6 +89,32 @@ def test_best_so_far_keeps_prior_when_later_regresses():
 
 def test_best_so_far_empty_returns_none():
     assert best_so_far([]) is None
+
+
+def test_frontier_keeps_incomparable_tradeoffs():
+    fast = _m(prefill=80, decode=80, vram=12, ppl=10)
+    compact = _m(prefill=100, decode=100, vram=8, ppl=9)
+    assert pareto_frontier([fast, compact]) == [fast, compact]
+
+
+def test_frontier_removes_dominated_points_order_independently():
+    weak = _m(prefill=120, decode=120, vram=12, ppl=12)
+    strong = _m(prefill=80, decode=80, vram=8, ppl=8)
+    assert pareto_frontier([weak, strong]) == [strong]
+    assert pareto_frontier([strong, weak]) == [strong]
+
+
+def test_frontier_collapses_epsilon_equivalent_points_to_latest():
+    first = _m()
+    latest = _m(prefill=100.5)
+    assert pareto_frontier([first, latest]) == [latest]
+
+
+def test_incomparable_tail_expands_frontier_and_is_not_stagnant():
+    base = _m(prefill=100, decode=100, vram=10, ppl=10)
+    faster = _m(prefill=80, decode=80, vram=12, ppl=10)
+    compact = _m(prefill=105, decode=105, vram=8, ppl=9)
+    assert not detect_stagnation([base, faster, compact], n=2)
 
 
 # detect_stagnation -----------------------------------------------------------

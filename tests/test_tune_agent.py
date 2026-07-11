@@ -123,6 +123,31 @@ def test_constraint_rejects_out_of_range_value(monkeypatch):
     assert "96" in result.reason
 
 
+def test_partial_proposal_is_materialized_with_defaults(monkeypatch):
+    decision = TuneDecision(
+        decision="propose", hyperparameters={"group_size": 64}, rationale="one knob"
+    )
+    _patch_llm(monkeypatch, decision)
+    result = tune_agent.propose(
+        method=_method(), ranges=_ranges(), history=[],
+        best_so_far=None, fp16_baseline=None, prior_wins=[],
+    )
+    assert result.hyperparameters == {"group_size": 64, "zero_point": True}
+
+
+def test_bool_is_not_accepted_for_integer_knob(monkeypatch):
+    decision = TuneDecision(
+        decision="propose", hyperparameters={"group_size": True}, rationale="wrong type"
+    )
+    _patch_llm(monkeypatch, decision)
+    result = tune_agent.propose(
+        method=_method(), ranges=_ranges(), history=[],
+        best_so_far=None, fp16_baseline=None, prior_wins=[],
+    )
+    assert result.decision == "stop"
+    assert "wrong type" in result.reason
+
+
 def test_constraint_rejects_duplicate_proposal(monkeypatch):
     repeat_hp = {"group_size": 64, "zero_point": True}
     decision = TuneDecision(

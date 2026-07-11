@@ -413,7 +413,9 @@ def test_adapt_retry_exhausted_falls_back_to_next_candidate(monkeypatch):
         orchestrator.executor, "wait_for_job", lambda jid: _make_meta(jid, "completed", 0)
     )
 
-    result = orchestrator.run("whatever", max_adapt_retries=2)
+    result = orchestrator.run(
+        "whatever", max_adapt_retries=2, fallback_candidates=True
+    )
 
     # First method got 2 adapt attempts, then fell through to the second method.
     assert per_method_calls[report.methods[0].id] == 2
@@ -445,3 +447,29 @@ def test_run_with_max_repairs_zero_skips_supervise(monkeypatch):
 
     wait_mock.assert_not_called()
     assert "Job launched: JOB1" in result
+
+
+def test_tune_with_max_repairs_zero_still_waits_for_baseline(monkeypatch):
+    report = _fixture_report()
+    monkeypatch.setattr(orchestrator.sys, "stdin", io.StringIO("1\n"))
+    monkeypatch.setattr(orchestrator.research_agent, "run", lambda _: report)
+    monkeypatch.setattr(
+        orchestrator.adapt_agent,
+        "run",
+        lambda model_id, method, previous_error=None, **kw: ("/tmp/out/script.py", "code"),
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "execute_quantization",
+        SimpleNamespace(invoke=MagicMock(return_value=json.dumps(
+            {"job_id": "JOB1", "pid": 1, "status": "running"}
+        ))),
+    )
+    completed = _make_meta("JOB1", "completed", 0)
+    wait_mock = MagicMock(return_value=completed)
+    monkeypatch.setattr(orchestrator.executor, "wait_for_job", wait_mock)
+    monkeypatch.setattr(orchestrator, "_measure_job", lambda _: None)
+
+    result = orchestrator.run("whatever", max_repairs=0, tune=True)
+    wait_mock.assert_called_once_with("JOB1")
+    assert "baseline measurement failed" in result

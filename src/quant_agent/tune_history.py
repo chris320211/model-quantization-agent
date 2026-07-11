@@ -6,6 +6,7 @@ Each entry records a *successful* tune iteration so future runs on the same
 from __future__ import annotations
 
 import json
+import fcntl
 import logging
 import os
 import re
@@ -73,7 +74,11 @@ def append(
     try:
         _CACHE_DIR.mkdir(parents=True, exist_ok=True)
         with _HISTORY_PATH.open("a") as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
             f.write(json.dumps(entry.to_dict()) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
     except OSError as e:
         log.warning("tune_history append failed: %s", e)
     return entry
@@ -117,7 +122,19 @@ def query_prior_wins(
         and e.method_id == method_id
     ]
     matches.sort(key=lambda e: e.timestamp, reverse=True)
-    return matches[:limit]
+    from .pareto import Metrics, pareto_frontier
+
+    valid: list[tuple[HistoryEntry, Metrics]] = []
+    for entry in matches:
+        try:
+            valid.append((entry, Metrics.from_dict(entry.metrics)))
+        except (KeyError, TypeError, ValueError):
+            continue
+    frontier = pareto_frontier(metric for _, metric in valid)
+    return [
+        entry for entry, metric in valid
+        if any(metric is point for point in frontier)
+    ][:limit]
 
 
 def history_path() -> Path:

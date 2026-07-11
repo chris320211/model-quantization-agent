@@ -50,7 +50,9 @@ make_venv() {
   pip install --upgrade pip wheel
   # torch goes first so method packages resolve against it
   pip install --index-url "${TORCH_INDEX}" "torch==2.3.1"
-  pip install transformers accelerate safetensors sentencepiece
+  pip install \
+    "transformers==4.46.3" "accelerate==1.1.1" "safetensors==0.4.5" \
+    "sentencepiece==0.2.0" "datasets==3.1.0"
 
   # method-specific deps
   "$@"

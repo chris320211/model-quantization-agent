@@ -17,6 +17,8 @@ from quant_agent.measurement import (
     parse_stdout_metrics,
     run_measurement,
     write_measure_script,
+    require_measurement_adapter,
+    UnsupportedMeasurementAdapter,
 )
 from quant_agent.pareto import Metrics
 
@@ -33,6 +35,9 @@ def test_measure_script_reads_required_env_vars():
     """The embedded script must consume MEASURE_MODEL_PATH and MEASURE_OUTPUT_JSON."""
     assert "MEASURE_MODEL_PATH" in MEASURE_SCRIPT
     assert "MEASURE_OUTPUT_JSON" in MEASURE_SCRIPT
+    assert "MEASURE_REPEATS" in MEASURE_SCRIPT
+    assert 'device_map="auto"' in MEASURE_SCRIPT
+    assert "decode_samples_ms_per_token" in MEASURE_SCRIPT
 
 
 # write_measure_script --------------------------------------------------------
@@ -167,6 +172,8 @@ def test_run_measurement_passes_env_vars(tmp_path, monkeypatch):
     )
     assert captured["env"]["MEASURE_MODEL_PATH"] == "quantized/awq-foo"
     assert captured["env"]["MEASURE_OUTPUT_JSON"].endswith("metrics.json")
+    assert captured["env"]["MEASURE_REPEATS"] == "5"
+    assert captured["env"]["MEASURE_DTYPE"] == "float16"
 
 
 # metrics_summary -------------------------------------------------------------
@@ -179,3 +186,20 @@ def test_metrics_summary_format():
     assert "45.6" in s
     assert "7.80" in s
     assert "9.000" in s
+    assert "ms/token" in s
+
+
+@pytest.mark.parametrize("payload", [
+    {"prefill_ms": float("nan"), "decode_ms": 1, "vram_gb": 1, "ppl": 1},
+    {"prefill_ms": -1, "decode_ms": 1, "vram_gb": 1, "ppl": 1},
+    {"prefill_ms": 1, "decode_ms": 1, "vram_gb": 1, "ppl": 0},
+])
+def test_metrics_reject_invalid_values(payload):
+    with pytest.raises(ValueError):
+        Metrics(**payload)
+
+
+def test_unknown_method_requires_explicit_measurement_adapter():
+    require_measurement_adapter("awq")
+    with pytest.raises(UnsupportedMeasurementAdapter, match="not configured"):
+        require_measurement_adapter("quip")

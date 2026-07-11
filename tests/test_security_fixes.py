@@ -296,3 +296,38 @@ def test_prune_keeps_best_despite_failure_placeholder(monkeypatch):
     # None placeholder is never handed to _prune_iteration.
     assert set(pruned) == {"C"}
     assert "A" not in pruned and "D" not in pruned
+
+
+def test_prune_keeps_all_incomparable_frontier_members(monkeypatch):
+    from quant_agent import orchestrator as orch
+    from quant_agent import tune_agent
+    from quant_agent.pareto import Metrics
+
+    fast = Metrics(prefill_ms=8, decode_ms=8, vram_gb=12, ppl=10)
+    compact = Metrics(prefill_ms=10, decode_ms=10, vram_gb=8, ppl=9)
+    dominated = Metrics(prefill_ms=20, decode_ms=20, vram_gb=20, ppl=20)
+    history = [
+        tune_agent.IterationRecord(hyperparameters={"x": 1}, metrics=fast),
+        tune_agent.IterationRecord(hyperparameters={"x": 2}, metrics=compact),
+        tune_agent.IterationRecord(hyperparameters={"x": 3}, metrics=dominated),
+    ]
+    metas = [MagicMock(job_id="fast"), MagicMock(job_id="compact"), MagicMock(job_id="latest")]
+    pruned: list[str] = []
+    monkeypatch.setattr(orch, "_prune_iteration", lambda m: pruned.append(m.job_id))
+    orch._prune_intermediate_jobs(history, metas)
+    assert pruned == []  # latest is retained by policy; both frontier members survive
+
+
+def test_prune_refuses_traversal_outside_quantized_root(tmp_path, monkeypatch):
+    from quant_agent import config
+    from quant_agent import orchestrator as orch
+
+    jobs = tmp_path / "jobs"
+    (jobs / "job").mkdir(parents=True)
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    monkeypatch.setattr(orch, "JOBS_ROOT", jobs)
+    monkeypatch.setattr(config, "REPO_ROOT", tmp_path)
+    meta = MagicMock(job_id="job", output_dir="./quantized/../../victim")
+    orch._prune_iteration(meta)
+    assert victim.exists()

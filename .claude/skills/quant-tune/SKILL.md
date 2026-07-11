@@ -284,4 +284,5 @@ Outputs this skill produces:
 
 ## Reference files (bundled in this skill)
 
-- `reference/measure.py` — the standalone measurement script. Reads `MEASURE_MODEL_PATH` and `MEASURE_OUTPUT_JSON` from env, runs prefill (2k+128) and decode (32+512) latency probes, captures `torch.cuda.max_memory_allocated`, and computes WikiText-2 sliding-window perplexity (max_length=2048, stride=512). Identical to the embedded `MEASURE_SCRIPT` in `src/quant_agent/measurement.py`. Drop into the job dir, set the two env vars, run it.
+- `reference/measure.py` — a thin launcher for the canonical packaged
+  `quant_agent.measurement.MEASURE_SCRIPT`, preventing skill/Python benchmark drift.

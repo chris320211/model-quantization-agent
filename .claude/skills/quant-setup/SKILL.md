@@ -1,6 +1,6 @@
 ---
 name: quant-setup
-description: Securely write or update the model-quantization-agent .env file (Anthropic key, HuggingFace token, etc.). Use when the user asks to "set up env", "configure HF token", "store anthropic key", "add my huggingface token", "set up credentials", or reports an HF 401/403 / missing-API-key error. Strongly recommends the `quant-agent setup` CLI (hidden input via getpass) and only writes from chat as a fallback when the user explicitly insists.
+description: Guide secure credential setup through the interactive `quant-agent setup` CLI. Use when the user asks to configure tokens or reports authentication errors. Never accepts or writes secrets from chat.
 ---
 
 # Quant-setup — secure credential setup for the quantization pipeline
@@ -38,42 +38,9 @@ Re-run with `--force` to replace an existing .env, or `--no-optional` to skip
 GITHUB_TOKEN and HUGGINGFACE_HUB_TOKEN prompts.
 ```
 
-Then ask: **"Run that and let me know when it's done — or, if you cannot use the terminal right now, paste the value here and I'll write only that single key (with a security caveat)."** Wait for their answer.
-
-### Path B — write a single key from chat (fallback only)
-
-Use this only when the user explicitly insists, after you have offered Path A. Each value pasted into chat is visible in the conversation transcript. Never write a token to chat or stdout.
-
-For each key the user provides:
-
-1. **Confirm the key name and value** (mention the key NAME only in your reply, never the value).
-2. **Warn explicitly** (one line): *"This value is now in our chat history. Consider rotating the token after this session, or using `quant-agent setup` next time for hidden input."*
-3. **Update the file** with `Edit` if the key exists, or append with a Python one-liner if it does not. Do **not** use `Write` on `.env` — overwriting the whole file risks dropping other keys.
-
-   To replace an existing key (preserves all other lines):
-   ```
-   Edit:
-     file_path: /home/ubuntu/model-quantization-agent/.env
-     old_string: HUGGINGFACE_HUB_TOKEN=<old-value-from-Read>
-     new_string: HUGGINGFACE_HUB_TOKEN=<new-value>
-   ```
-
-   To append a new key, use Bash with a heredoc and immediately re-tighten perms:
-   ```
-   python3 -c "
-   import os, pathlib
-   p = pathlib.Path('/home/ubuntu/model-quantization-agent/.env')
-   p.write_text(p.read_text() + 'HUGGINGFACE_HUB_TOKEN=<new-value>\n')
-   os.chmod(p, 0o600)
-   "
-   ```
-
-4. **Re-tighten permissions** even after `Edit` (defensive):
-   ```
-   chmod 600 /home/ubuntu/model-quantization-agent/.env
-   ```
-
-5. **Validate** the value worked (see Validation section below).
+Then wait for the user to confirm completion. Do not accept credentials in chat and
+do not read or edit the credential file through agent tools. If the user cannot use
+the interactive CLI, explain that setup must wait until a secure terminal is available.
 
 ## Validation per key type
 

@@ -48,7 +48,7 @@ Run these in parallel.
 
 ## Phase 2 — Research
 
-Read `reference/methods.yaml` (the catalog, 34 methods).
+Read `reference/methods.yaml` (the catalog, 35 methods).
 
 Your job is to survey **every** catalog method and produce a ranked candidate list. **You do not pick a winner — the user picks.**
 
@@ -153,7 +153,9 @@ You are now writing a Python script that quantizes `<model_id>` using `<chosen.n
    - imports `sys, os, subprocess, pathlib`
    - reads `HF_TOKEN` from env (`HUGGINGFACE_HUB_TOKEN` or `HF_TOKEN`) and passes it into the child env
    - computes `REPO = pathlib.Path("/tmp/quant-<chosen.id>/repo").resolve()`
-   - `subprocess.run([sys.executable, "<entry_path_relative_to_repo>", "<flag_name>", "<model_id>", "<output_flag>", str(OUT)], cwd=REPO, env={**os.environ, ...}, check=True)`
+   - builds `child = {"PATH": os.environ.get("PATH", "")}` and adds only the
+     two HF token aliases when present
+   - `subprocess.run([sys.executable, "<entry_path_relative_to_repo>", "<flag_name>", "<model_id>", "<output_flag>", str(OUT)], cwd=REPO, env=child, check=True)`
    - `OUT = pathlib.Path("./quantized/<chosen.id>-<safe_model>").resolve()`
    - **EXACT flag names MUST come from the example source you read.** Do not invent flag names.
 
@@ -230,9 +232,9 @@ Do not offer to run the script — execution is intentionally out of scope.
 
 ## Reference files (bundled in this skill)
 
-- `reference/methods.yaml` — the 34-method catalog, copied verbatim from `seed/methods.yaml`. Authoritative for `id`, `repos`, `bits`, `quality`, `speedup`, `needs_calibration`, `notes`.
-- `reference/model_aliases.yaml` — fuzzy model phrase → canonical HF id, copied verbatim from `seed/model_aliases.yaml`.
-- `reference/aws_instances.yaml` — instance type → `{vram_gb, gpu_count, gpu}`, copied verbatim from `seed/aws_instances.yaml`.
-- `reference/gpu_specs.yaml` — GPU model → `{compute_capability, gpu_arch}`, copied verbatim from `seed/gpu_specs.yaml`.
+- `reference/methods.yaml` — the 35-method catalog, generated from `src/quant_agent/data/methods.yaml`. Authoritative for `id`, `repos`, `bits`, `quality`, `speedup`, `needs_calibration`, `notes`.
+- `reference/model_aliases.yaml` — fuzzy model phrase → canonical HF id, generated from packaged data.
+- `reference/aws_instances.yaml` — instance type → `{vram_gb, gpu_count, gpu}`, generated from packaged data.
+- `reference/gpu_specs.yaml` — GPU model → `{compute_capability, gpu_arch}`, generated from packaged data.
 
 These four files are the entire grounding surface. If a fact you need is not in them and not derivable from the user's input or a single WebFetch on HuggingFace / GitHub, ask the user instead of guessing.

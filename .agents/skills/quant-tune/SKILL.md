@@ -51,8 +51,8 @@ Two measurements run **once** before the loop. Both write `metrics.json` next to
 If `jobs/<job_id>/metrics.json` already exists with the four fields below, skip this. Otherwise (note the env loader — even though the quantized baseline reads weights from local disk, `transformers` may still touch HF for `chat_template.jinja` or revision metadata; sourcing is cheap insurance):
 
 ```bash
-source /home/ubuntu/model-quantization-agent/.Codex/skills/_shared/load_env.sh || exit 1
-cp .Codex/skills/quant-tune/reference/measure.py jobs/<job_id>/measure.py
+source /home/ubuntu/model-quantization-agent/.agents/skills/_shared/load_env.sh || exit 1
+cp .agents/skills/quant-tune/reference/measure.py jobs/<job_id>/measure.py
 chmod +x jobs/<job_id>/measure.py
 MEASURE_MODEL_PATH=<output_dir> \
 MEASURE_OUTPUT_JSON=jobs/<job_id>/metrics.json \
@@ -95,9 +95,9 @@ fi
 Then run the measure script with the model id (HF will load fp16 directly — `HF_TOKEN` is required for gated repos, hence the loader):
 
 ```bash
-source /home/ubuntu/model-quantization-agent/.Codex/skills/_shared/load_env.sh || exit 1
+source /home/ubuntu/model-quantization-agent/.agents/skills/_shared/load_env.sh || exit 1
 mkdir -p jobs/<job_id>/fp16_baseline
-cp .Codex/skills/quant-tune/reference/measure.py jobs/<job_id>/fp16_baseline/measure.py
+cp .agents/skills/quant-tune/reference/measure.py jobs/<job_id>/fp16_baseline/measure.py
 MEASURE_MODEL_PATH=<model_id> \
 MEASURE_OUTPUT_JSON=jobs/<job_id>/fp16_baseline/metrics.json \
 .venvs/_fp16_reference/bin/python jobs/<job_id>/fp16_baseline/measure.py \
@@ -284,4 +284,5 @@ Outputs this skill produces:
 
 ## Reference files (bundled in this skill)
 
-- `reference/measure.py` — the standalone measurement script. Reads `MEASURE_MODEL_PATH` and `MEASURE_OUTPUT_JSON` from env, runs prefill (2k+128) and decode (32+512) latency probes, captures `torch.cuda.max_memory_allocated`, and computes WikiText-2 sliding-window perplexity (max_length=2048, stride=512). Identical to the embedded `MEASURE_SCRIPT` in `src/quant_agent/measurement.py`. Drop into the job dir, set the two env vars, run it.
+- `reference/measure.py` — a thin launcher for the canonical packaged
+  `quant_agent.measurement.MEASURE_SCRIPT`, preventing skill/Python benchmark drift.

@@ -84,19 +84,24 @@ Mirror `executor.launch` in `src/quant_agent/executor.py`:
 
 1. Generate a `job_id`: `Bash: date -u +%Y%m%dT%H%M%SZ-$(openssl rand -hex 3)`.
 2. Create `jobs/<job_id>/` and snapshot the script: `cp <script_path> jobs/<job_id>/script.py`.
-3. Launch with `setsid` so it survives an SSH disconnect (this is the same trick `executor.py` uses). **Source the shared env loader first** — the Python agent gets dotenv vars via `pydantic-settings`, but a bash `setsid` wrapper does not inherit them unless you load them explicitly. This is the source of most "401 gated repo" failures on cached models (Llama-2's `chat_template.jinja` and similar new-file fetches re-trigger auth even when the safetensors are cached):
+3. Launch with `setsid` so it survives an SSH disconnect. Parse credentials with the
+shared loader, then cross an `env -i` boundary that forwards only HF authentication.
 
 ```bash
 setsid bash -c '
   source /home/ubuntu/model-quantization-agent/.claude/skills/_shared/load_env.sh || exit 1
-  .venvs/<method_id>/bin/python jobs/<job_id>/script.py \
+  env -i PATH="$PATH" HOME="$HOME" \
+    HUGGINGFACE_HUB_TOKEN="${HUGGINGFACE_HUB_TOKEN:-}" HF_TOKEN="${HF_TOKEN:-}" \
+    .venvs/<method_id>/bin/python jobs/<job_id>/script.py \
     > jobs/<job_id>/stdout.log 2> jobs/<job_id>/stderr.log
   echo $? > jobs/<job_id>/exit_code
 ' &
 echo $! > jobs/<job_id>/pid
 ```
 
-The loader (`_shared/load_env.sh`) refuses to source a `.env` whose mode is not `600` (auto-tightens), exports every key, and aliases `HUGGINGFACE_HUB_TOKEN` ↔ `HF_TOKEN` so the generated script sees whichever name it expects. Echoes only key NAMES to stderr — never values — so `jobs/<job_id>/stderr.log` stays clean.
+The loader parses a mode-600 credential file without executing shell syntax. The
+`env -i` boundary above forwards only PATH, HOME, and the two HF token aliases to
+generated code; Anthropic and GitHub credentials remain in the supervising shell.
 
 If the loader returns non-zero (no `.env`, or `HF_TOKEN`/`HUGGINGFACE_HUB_TOKEN` missing for a gated model), **don't launch yet** — direct the user to the `/quant-setup` skill (or `quant-agent setup` in a real terminal for hidden input). This is a launch-time precondition, not a runtime fix.
 

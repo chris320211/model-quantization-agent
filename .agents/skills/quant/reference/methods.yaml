@@ -752,3 +752,29 @@
   notes: Industry standard (Microsoft/AMD/Intel/NVIDIA). Microscaling FP8 format with
     shared exponent per block. Native hardware support on Hopper/Ada/MI300X. Zero
     accuracy loss vs FP16 in most cases.
+- id: gguf
+  name: GGUF (llama.cpp k-quants)
+  arxiv_id: null
+  repos:
+  - https://github.com/ggml-org/llama.cpp
+  bits:
+  - 2
+  - 3
+  - 4
+  - 5
+  - 6
+  - 8
+  quantizes:
+  - weights
+  needs_calibration: false
+  qat: false
+  inference_backends:
+  - llama_cpp
+  template: null
+  quality: 4
+  speedup: 4
+  maturity: 5
+  notes: k-quant block format for llama.cpp. Runs on CPU/Metal/CUDA/ROCm with GPU
+    offload; the standard path for local/consumer-hardware inference. Base k-quants
+    need no calibration; an optional imatrix (importance matrix) improves low-bit
+    fidelity.

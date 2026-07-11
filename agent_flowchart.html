@@ -1,145 +1,52 @@
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>quant-agent</title>
-<style>
-  * { box-sizing: border-box; }
-  body { margin: 0; background: #0d1117; display: flex; justify-content: center; padding: 40px 20px; min-height: 100vh; }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>quant-agent architecture</title>
+  <style>
+    body { margin: 0; padding: 32px; background: #0d1117; color: #e6edf3; font: 15px/1.45 system-ui, sans-serif; }
+    main { max-width: 980px; margin: auto; }
+    h1 { color: #a78bfa; }
+    .flow { display: grid; gap: 14px; }
+    .row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; align-items: stretch; }
+    .box { border: 1px solid #3b4a63; border-radius: 10px; padding: 16px; background: #161b22; }
+    .agent { border-color: #6366f1; }
+    .runtime { border-color: #f59e0b; }
+    .data { border-color: #22c55e; }
+    .wide { grid-column: 1 / -1; }
+    code { color: #93c5fd; }
+    .arrow { text-align: center; color: #64748b; font-size: 24px; }
+    ul { margin: 8px 0 0 18px; padding: 0; }
+    @media (max-width: 760px) { .row { grid-template-columns: 1fr; } }
+  </style>
 </head>
 <body>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 660" width="720" style="max-width:100%;display:block;">
-<defs>
-  <marker id="ai" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-    <path d="M0,0 L10,5 L0,10 z" fill="#6366f1"/>
-  </marker>
-  <marker id="aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-    <path d="M0,0 L10,5 L0,10 z" fill="#f59e0b"/>
-  </marker>
-  <marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-    <path d="M0,0 L10,5 L0,10 z" fill="#22c55e"/>
-  </marker>
-  <marker id="ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-    <path d="M0,0 L10,5 L0,10 z" fill="#8b5cf6"/>
-  </marker>
-</defs>
-
-<!-- Background -->
-<rect width="720" height="660" fill="#0d1117" rx="16"/>
-
-<!-- Title -->
-<text x="360" y="34" text-anchor="middle" fill="#a78bfa" font-family="sans-serif" font-size="18" font-weight="700">quant-agent</text>
-<text x="360" y="52" text-anchor="middle" fill="#475569" font-family="sans-serif" font-size="11">LangChain · ReAct · Claude · catalog + paper</text>
-
-<!-- ReAct agent loop outline -->
-<rect x="205" y="108" width="295" height="374" rx="12" fill="none" stroke="#312e81" stroke-width="1.5" stroke-dasharray="6,3"/>
-<text x="217" y="103" fill="#4338ca" font-family="sans-serif" font-size="9" font-weight="700" letter-spacing="1.5">REACT AGENT LOOP</text>
-
-<!-- INPUT -->
-<rect x="235" y="63" width="250" height="40" rx="20" fill="#064e3b" stroke="#10b981" stroke-width="1.5"/>
-<text x="360" y="78" text-anchor="middle" fill="#d1fae5" font-family="sans-serif" font-size="12" font-weight="700">User Input</text>
-<text x="360" y="95" text-anchor="middle" fill="#6ee7b7" font-family="sans-serif" font-size="10">model · VRAM · priority · backend</text>
-
-<line x1="360" y1="103" x2="360" y2="117" stroke="#6366f1" stroke-width="1.5" marker-end="url(#ai)"/>
-
-<!-- STEP 1 -->
-<rect x="220" y="119" width="280" height="50" rx="8" fill="#1e1b4b" stroke="#6366f1" stroke-width="1.5"/>
-<text x="360" y="138" text-anchor="middle" fill="#c7d2fe" font-family="sans-serif" font-size="12" font-weight="700">① hf_model_info</text>
-<text x="360" y="155" text-anchor="middle" fill="#818cf8" font-family="sans-serif" font-size="10">Fetch config · params · arch from HF Hub</text>
-
-<line x1="360" y1="169" x2="360" y2="183" stroke="#6366f1" stroke-width="1.5" marker-end="url(#ai)"/>
-
-<!-- STEP 2 -->
-<rect x="220" y="185" width="280" height="50" rx="8" fill="#1e1b4b" stroke="#6366f1" stroke-width="1.5"/>
-<text x="360" y="204" text-anchor="middle" fill="#c7d2fe" font-family="sans-serif" font-size="12" font-weight="700">② recommend_quantization</text>
-<text x="360" y="221" text-anchor="middle" fill="#818cf8" font-family="sans-serif" font-size="10">Filter catalog · score → top-5 methods</text>
-
-<line x1="360" y1="235" x2="360" y2="249" stroke="#6366f1" stroke-width="1.5" marker-end="url(#ai)"/>
-
-<!-- STEP 3 -->
-<rect x="220" y="251" width="280" height="50" rx="8" fill="#1e1b4b" stroke="#6366f1" stroke-width="1.5"/>
-<text x="360" y="270" text-anchor="middle" fill="#c7d2fe" font-family="sans-serif" font-size="12" font-weight="700">③ inspect_model_architecture</text>
-<text x="360" y="287" text-anchor="middle" fill="#818cf8" font-family="sans-serif" font-size="10">Meta-device module tree · full config.json</text>
-
-<line x1="360" y1="301" x2="360" y2="317" stroke="#6366f1" stroke-width="1.5" marker-end="url(#ai)"/>
-
-<!-- DIAMOND: center (360, 346), half-w=84, half-h=29 -->
-<polygon points="360,317 444,346 360,375 276,346" fill="#1c1917" stroke="#f59e0b" stroke-width="1.5"/>
-<text x="360" y="342" text-anchor="middle" fill="#fde68a" font-family="sans-serif" font-size="11" font-weight="700">repo thin?</text>
-<text x="360" y="357" text-anchor="middle" fill="#fbbf24" font-family="sans-serif" font-size="9">docs sparse</text>
-
-<!-- no branch: Diamond → S5 -->
-<text x="366" y="401" fill="#818cf8" font-family="sans-serif" font-size="10">no</text>
-<line x1="360" y1="375" x2="360" y2="415" stroke="#6366f1" stroke-width="1.5" marker-end="url(#ai)"/>
-
-<!-- yes branch: Diamond → S4 -->
-<text x="447" y="343" fill="#fbbf24" font-family="sans-serif" font-size="10">yes</text>
-<line x1="444" y1="346" x2="497" y2="346" stroke="#f59e0b" stroke-width="1.5" marker-end="url(#aa)"/>
-
-<!-- STEP 4 (optional, side) -->
-<rect x="499" y="323" width="185" height="50" rx="8" fill="#1c1917" stroke="#f59e0b" stroke-width="1.5"/>
-<text x="591" y="343" text-anchor="middle" fill="#fde68a" font-family="sans-serif" font-size="11" font-weight="700">④ read_paper</text>
-<text x="591" y="359" text-anchor="middle" fill="#d97706" font-family="sans-serif" font-size="9">arxiv full text · when repo thin</text>
-<rect x="499" y="313" width="58" height="14" rx="4" fill="#78350f"/>
-<text x="528" y="324" text-anchor="middle" fill="#fde68a" font-family="sans-serif" font-size="8" font-weight="700">optional</text>
-
-<!-- S4 → S5 return path -->
-<path d="M591,373 L591,437 L502,437" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="5,2" fill="none" marker-end="url(#aa)"/>
-
-<!-- STEP 5 -->
-<rect x="220" y="417" width="280" height="50" rx="8" fill="#1e1b4b" stroke="#6366f1" stroke-width="1.5"/>
-<text x="360" y="436" text-anchor="middle" fill="#c7d2fe" font-family="sans-serif" font-size="12" font-weight="700">⑤ generate_script</text>
-<text x="360" y="453" text-anchor="middle" fill="#818cf8" font-family="sans-serif" font-size="10">Render Jinja2 template → ./out/*.py</text>
-
-<line x1="360" y1="467" x2="360" y2="486" stroke="#6366f1" stroke-width="1.5" marker-end="url(#ai)"/>
-
-<!-- OUTPUT -->
-<rect x="235" y="488" width="250" height="46" rx="23" fill="#1e3a5f" stroke="#3b82f6" stroke-width="1.5"/>
-<text x="360" y="506" text-anchor="middle" fill="#dbeafe" font-family="sans-serif" font-size="12" font-weight="700">Output</text>
-<text x="360" y="522" text-anchor="middle" fill="#93c5fd" font-family="sans-serif" font-size="10">method · VRAM · citations · script path</text>
-
-<!-- DATA STORES ─────────────────────────────── -->
-
-<!-- methods.yaml cylinder: rect y=194–236, ellipses at y=194 and y=236 -->
-<rect x="45" y="194" width="110" height="42" fill="#14532d" stroke="#16a34a" stroke-width="1.5"/>
-<ellipse cx="100" cy="194" rx="55" ry="13" fill="#166534" stroke="#16a34a" stroke-width="1.5"/>
-<ellipse cx="100" cy="236" rx="55" ry="13" fill="#14532d" stroke="#16a34a" stroke-width="1.5"/>
-<text x="100" y="213" text-anchor="middle" fill="#bbf7d0" font-family="sans-serif" font-size="10" font-weight="700">methods.yaml</text>
-<text x="100" y="228" text-anchor="middle" fill="#86efac" font-family="sans-serif" font-size="9">15+ quant methods</text>
-
-<path d="M155,215 L220,210" stroke="#22c55e" stroke-width="1.2" stroke-dasharray="4,2" fill="none" marker-end="url(#ag)"/>
-
-<!-- Chroma cylinder: rect y=338–380, ellipses at y=338 and y=380 -->
-<rect x="45" y="338" width="110" height="42" fill="#1e1b4b" stroke="#8b5cf6" stroke-width="1.5"/>
-<ellipse cx="100" cy="338" rx="55" ry="13" fill="#2e1065" stroke="#8b5cf6" stroke-width="1.5"/>
-<ellipse cx="100" cy="380" rx="55" ry="13" fill="#1e1b4b" stroke="#8b5cf6" stroke-width="1.5"/>
-<text x="100" y="357" text-anchor="middle" fill="#ddd6fe" font-family="sans-serif" font-size="10" font-weight="700">Chroma DB</text>
-<text x="100" y="372" text-anchor="middle" fill="#a78bfa" font-family="sans-serif" font-size="9">arxiv · readmes · cards</text>
-
-<path d="M155,360 L220,276" stroke="#8b5cf6" stroke-width="1.2" stroke-dasharray="4,2" fill="none" marker-end="url(#ap)"/>
-
-<!-- LEGEND ──────────────────────────────────── -->
-<rect x="45" y="556" width="630" height="56" rx="8" fill="#111827" stroke="#1f2937" stroke-width="1"/>
-
-<line x1="68" y1="576" x2="96" y2="576" stroke="#6366f1" stroke-width="2" marker-end="url(#ai)"/>
-<text x="104" y="580" fill="#818cf8" font-family="sans-serif" font-size="10">agent flow</text>
-
-<line x1="68" y1="599" x2="96" y2="599" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="5,2" marker-end="url(#aa)"/>
-<text x="104" y="603" fill="#fbbf24" font-family="sans-serif" font-size="10">optional branch</text>
-
-<line x1="218" y1="576" x2="246" y2="576" stroke="#22c55e" stroke-width="1.5" stroke-dasharray="4,2" marker-end="url(#ag)"/>
-<text x="254" y="580" fill="#86efac" font-family="sans-serif" font-size="10">reads catalog</text>
-
-<line x1="218" y1="599" x2="246" y2="599" stroke="#8b5cf6" stroke-width="1.5" stroke-dasharray="4,2" marker-end="url(#ap)"/>
-<text x="254" y="603" fill="#a78bfa" font-family="sans-serif" font-size="10">queries vector store</text>
-
-<line x1="370" y1="587" x2="370" y2="611" stroke="#1f2937" stroke-width="1"/>
-
-<text x="498" y="578" text-anchor="middle" fill="#64748b" font-family="sans-serif" font-size="9" font-weight="700" letter-spacing="1">SCORING (② recommend)</text>
-<text x="498" y="595" text-anchor="middle" fill="#6366f1" font-family="sans-serif" font-size="9">quality  0.6·qual + 0.15·spd + 0.25·mat</text>
-<text x="498" y="609" text-anchor="middle" fill="#6366f1" font-family="sans-serif" font-size="9">speed    0.2·qual + 0.55·spd + 0.25·mat</text>
-
-</svg>
+<main>
+  <h1>quant-agent</h1>
+  <p>Current Python pipeline and its trust boundaries. Catalogs are packaged under <code>quant_agent/data</code>.</p>
+  <section class="flow">
+    <div class="row">
+      <div class="box agent wide"><strong>Research</strong><ul><li>Resolve exact HF model and AWS hardware</li><li>Walk all catalog entries</li><li>Validate finalists against canonical catalog facts</li></ul></div>
+    </div>
+    <div class="arrow">↓ user selects one method</div>
+    <div class="row">
+      <div class="box agent"><strong>Adapt ReAct agent</strong><br>Clone, inspect, install, introspect, author</div>
+      <div class="box data"><strong>Canonical inputs</strong><br>Method catalog, model config, paper, pinned local checkout commit</div>
+      <div class="box runtime"><strong>Execution policy</strong><br>Explicit unsafe-host acknowledgement; credential-minimal child environments</div>
+      <div class="box data"><strong>Transactional validation</strong><br>AST + dry import; atomic promotion; fail closed</div>
+    </div>
+    <div class="arrow">↓ validated script</div>
+    <div class="row">
+      <div class="box runtime"><strong>Executor</strong><br>Detached process group, atomic job metadata, confirmed TERM→KILL</div>
+      <div class="box agent"><strong>Fix agent</strong><br>One constrained repair per attempt; preserved history</div>
+      <div class="box data"><strong>Measurement</strong><br>Repeated prefill and ms/token decode, VRAM, perplexity</div>
+      <div class="box agent"><strong>Tuner</strong><br>Validated proposals and complete non-dominated Pareto frontier</div>
+    </div>
+    <div class="row">
+      <div class="box data wide"><strong>Workspace</strong>: <code>jobs/</code>, <code>out/</code>, <code>quantized/</code>, <code>.venvs/</code>. Editable installs default to the checkout; packaged installs default to <code>~/.local/share/quant-agent</code>.</div>
+    </div>
+  </section>
+</main>
 </body>
 </html>

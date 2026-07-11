@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Securely load model-quantization-agent .env into the current shell.
+# Strictly parse model-quantization-agent credentials into the current shell.
 #
 # Usage:
 #   source /home/ubuntu/model-quantization-agent/.claude/skills/_shared/load_env.sh
@@ -8,9 +8,8 @@
 #   source .../_shared/load_env.sh /path/to/.env
 #
 # Behavior:
-#   - Refuses to source a world-readable .env (mode != 600); auto-tightens to 600.
-#   - Exports every KEY=value line via `set -a` (matches python-dotenv semantics
-#     for the format `quant-agent setup` writes).
+#   - Refuses a world-readable credential file (mode != 600); auto-tightens to 600.
+#   - Parses an explicit key allowlist without evaluating shell syntax.
 #   - Aliases HUGGINGFACE_HUB_TOKEN -> HF_TOKEN so libraries reading either name
 #     see the same value.
 #   - Never echoes secret values; only echoes key NAMES that were loaded.
@@ -41,20 +40,28 @@ _quant_load_env() {
     }
   fi
 
-  # Capture the keys we are about to set so we can announce them by name only.
-  local loaded_keys
-  loaded_keys=$(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$env_file" | cut -d= -f1 | tr '\n' ' ')
-
-  set -a
-  # shellcheck disable=SC1090
-  source "$env_file"
-  local rc=$?
-  set +a
-
-  if [[ $rc -ne 0 ]]; then
-    echo "[env] failed to source $env_file (rc=$rc)" >&2
-    return $rc
-  fi
+  # Parse data; never `source` the file. Only the documented keys are accepted,
+  # so shell syntax and command substitutions remain inert text.
+  local loaded_keys="" line key value
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+    if [[ ! "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+      echo "[env] malformed assignment; refusing to load" >&2
+      return 1
+    fi
+    key="${BASH_REMATCH[1]}"
+    value="${BASH_REMATCH[2]}"
+    case "$key" in
+      ANTHROPIC_API_KEY|GITHUB_TOKEN|HUGGINGFACE_HUB_TOKEN|HF_TOKEN|QUANT_AGENT_MODEL|QUANT_AGENT_TORCH_SPEC)
+        export "$key=$value"
+        loaded_keys+="$key "
+        ;;
+      *)
+        echo "[env] unsupported key $key; refusing to load" >&2
+        return 1
+        ;;
+    esac
+  done < "$env_file"
 
   # HuggingFace libraries are split between two env-var names. Normalize.
   if [[ -n "${HUGGINGFACE_HUB_TOKEN:-}" && -z "${HF_TOKEN:-}" ]]; then

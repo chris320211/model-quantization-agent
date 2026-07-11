@@ -26,6 +26,17 @@ def main() -> int:
     if len(methods) != 35:
         errors.append(f"expected 35 methods, found {len(methods)}")
 
+    capabilities = yaml.safe_load((CANON / "method_capabilities.yaml").read_text())
+    capability_methods = (capabilities or {}).get("methods", {})
+    catalog_ids = {row["id"] for row in methods}
+    capability_ids = set(capability_methods)
+    if capability_ids != catalog_ids:
+        errors.append(
+            "capability catalog drift: "
+            f"missing={sorted(catalog_ids - capability_ids)}, "
+            f"extra={sorted(capability_ids - catalog_ids)}"
+        )
+
     text_files = [ROOT / "README.md", *ROOT.glob(".agents/skills/*/SKILL.md")]
     for path in text_files:
         text = path.read_text()

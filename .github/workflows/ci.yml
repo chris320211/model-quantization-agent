@@ -31,6 +31,7 @@ jobs:
               "quant_agent/data/model_aliases.yaml",
               "quant_agent/data/aws_instances.yaml",
               "quant_agent/data/gpu_specs.yaml",
+              "quant_agent/data/method_capabilities.yaml",
           }
           missing = expected - names
           if missing:

@@ -27,7 +27,7 @@ class MethodCandidate(BaseModel):
 
 
 class ConsideredMethod(BaseModel):
-    """One row in the 34-way walk the Research agent performs over the catalog."""
+    """One row in the complete method-catalog walk performed by Research."""
     id: str = Field(..., description="Packaged catalog id.")
     verdict: Literal["include", "reject"]
     reason: str = Field(

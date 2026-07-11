@@ -16,6 +16,12 @@ from dataclasses import dataclass
 from langchain_anthropic import ChatAnthropic
 from pydantic import ValidationError
 
+from .compatibility import (
+    CompatibilityDecision,
+    CompatibilityRequest,
+    decisions_as_prompt_context,
+    evaluate_catalog,
+)
 from .config import load_settings
 from .hardware_probe import probe_live
 from .schemas import ResearchReport
@@ -150,6 +156,15 @@ The `hyperparameters_default` field, when present, lists tunable knobs and their
 values; use it to set the candidate's `hyperparameters` to a sensible starting config):
 {catalog}
 
+Deterministic constraint results (authoritative for status="blocked"):
+{deterministic_constraints}
+
+The deterministic engine has already evaluated catalog facts, requested backend/bit
+width, calibration/QAT policy, weight-memory estimates, documented compute capability,
+GPU architecture, and model-family constraints. You MUST reject every status="blocked"
+method using its reason. You may investigate and decide status="unknown" methods. An
+"eligible" status means only that hard constraints passed; it is not a ranking.
+
 Task — do these steps in order.
 
 1. Per-method walk. For EVERY catalog id above, emit one `considered` entry with:
@@ -235,6 +250,20 @@ def run(user_input: str) -> ResearchReport:
     info = _hf_info(model_id)
     params_b = info.get("params_b")
 
+    compatibility_request = CompatibilityRequest(
+        params_b=params_b,
+        vram_gb=vram_gb,
+        compute_capability=compute_capability,
+        gpu_arch=gpu_arch,
+        architectures=info.get("architectures") or [],
+        target_bits=parsed.target_bits,
+        backend=parsed.backend,
+        have_calibration_data=parsed.have_calibration_data,
+        allow_qat=parsed.allow_qat,
+        need_kv_cache_quant=parsed.need_kv_cache_quant,
+    )
+    deterministic = evaluate_catalog(compatibility_request)
+
     prompt = _PROMPT.format(
         model_id=model_id,
         params_b=params_b,
@@ -254,6 +283,7 @@ def run(user_input: str) -> ResearchReport:
         hw_profile=json.dumps(hw_profile.to_dict(), indent=2),
         hf_info=json.dumps(info, indent=2),
         catalog=_catalog_context(),
+        deterministic_constraints=decisions_as_prompt_context(deterministic),
     )
 
     s = load_settings()
@@ -262,16 +292,21 @@ def run(user_input: str) -> ResearchReport:
 
     try:
         report: ResearchReport = structured.invoke(prompt)
-    except ValidationError as first_err:
+        _require_no_blocked_finalists(report, deterministic)
+    except (ValidationError, ValueError) as first_err:
         retry_prompt = (
             prompt
             + "\n\nYour previous response failed schema validation:\n"
             + str(first_err)
             + "\n\nRe-emit the ResearchReport. Every catalog id above must appear "
             "exactly once in `considered` with a verdict; every id in `methods` "
-            "must have a matching 'include' verdict."
+            "must have a matching 'include' verdict. Deterministically blocked ids "
+            "must be rejected and cannot appear in `methods`."
         )
         report = structured.invoke(retry_prompt)
+
+    _require_no_blocked_finalists(report, deterministic)
+    report = _canonicalize_blocked_verdicts(report, deterministic)
 
     return report.model_copy(
         update={
@@ -286,3 +321,31 @@ def run(user_input: str) -> ResearchReport:
             "int8_tops": int8_tops,
         }
     )
+
+
+def _require_no_blocked_finalists(
+    report: ResearchReport, decisions: list[CompatibilityDecision]
+) -> None:
+    blocked = {d.method_id for d in decisions if d.hard_blocked}
+    invalid = [method.id for method in report.methods if method.id in blocked]
+    if invalid:
+        raise ValueError(f"deterministically blocked finalists: {invalid}")
+
+
+def _canonicalize_blocked_verdicts(
+    report: ResearchReport, decisions: list[CompatibilityDecision]
+) -> ResearchReport:
+    """Make hard rejections non-overridable while retaining the full catalog walk."""
+    blocked = {d.method_id: d for d in decisions if d.hard_blocked}
+    considered = []
+    for row in report.considered:
+        decision = blocked.get(row.id)
+        if decision is None:
+            considered.append(row)
+            continue
+        reason = "; ".join(r.message for r in decision.reasons)
+        considered.append(row.model_copy(update={
+            "verdict": "reject",
+            "reason": f"deterministic constraint: {reason}",
+        }))
+    return report.model_copy(update={"considered": considered})

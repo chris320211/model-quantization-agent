@@ -48,7 +48,7 @@ def test_run_returns_new_job_id_on_successful_relaunch(monkeypatch):
 
     fake_agent = SimpleNamespace(invoke=MagicMock(return_value=final_state))
     monkeypatch.setattr(fix_agent, "create_react_agent", lambda *a, **kw: fake_agent)
-    monkeypatch.setattr(fix_agent, "ChatAnthropic", lambda **kw: MagicMock())
+    monkeypatch.setattr(fix_agent, "create_chat_model", lambda *a, **kw: MagicMock())
     monkeypatch.setattr(fix_agent.executor, "refresh_status", lambda jid: _meta(jid))
 
     new_id = fix_agent.run(
@@ -66,7 +66,7 @@ def test_run_returns_none_when_agent_does_not_relaunch(monkeypatch):
     final_state = {"messages": [SimpleNamespace(name=None, content="I give up")]}
     fake_agent = SimpleNamespace(invoke=MagicMock(return_value=final_state))
     monkeypatch.setattr(fix_agent, "create_react_agent", lambda *a, **kw: fake_agent)
-    monkeypatch.setattr(fix_agent, "ChatAnthropic", lambda **kw: MagicMock())
+    monkeypatch.setattr(fix_agent, "create_chat_model", lambda *a, **kw: MagicMock())
     monkeypatch.setattr(fix_agent.executor, "refresh_status", lambda jid: _meta(jid))
 
     new_id = fix_agent.run(
@@ -88,7 +88,7 @@ def test_run_returns_none_when_relaunch_tool_errored(monkeypatch):
     final_state = {"messages": [fake_tool_message]}
     fake_agent = SimpleNamespace(invoke=MagicMock(return_value=final_state))
     monkeypatch.setattr(fix_agent, "create_react_agent", lambda *a, **kw: fake_agent)
-    monkeypatch.setattr(fix_agent, "ChatAnthropic", lambda **kw: MagicMock())
+    monkeypatch.setattr(fix_agent, "create_chat_model", lambda *a, **kw: MagicMock())
     monkeypatch.setattr(fix_agent.executor, "refresh_status", lambda jid: _meta(jid))
 
     new_id = fix_agent.run(
@@ -167,7 +167,7 @@ def test_run_injects_prior_attempts_into_prompt(monkeypatch):
         return SimpleNamespace(invoke=MagicMock(return_value={"messages": []}))
 
     monkeypatch.setattr(fix_agent, "create_react_agent", fake_create)
-    monkeypatch.setattr(fix_agent, "ChatAnthropic", lambda **kw: MagicMock())
+    monkeypatch.setattr(fix_agent, "create_chat_model", lambda *a, **kw: MagicMock())
     monkeypatch.setattr(fix_agent.executor, "refresh_status", lambda jid: _meta(jid))
 
     fix_agent.run(

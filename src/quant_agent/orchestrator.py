@@ -69,12 +69,15 @@ def format_report(report: ResearchReport) -> str:
     lines.append("")
     lines.append("Candidate methods:")
     for i, m in enumerate(report.methods, 1):
+        port_tag = ", PORT" if m.requires_port else ""
         lines.append(
             f"  {i}. {m.name}  ({m.id}, {m.bits}-bit, ~{m.est_vram_gb:g} GB, "
             f"Q={m.quality_score}/5 S={m.speed_score}/5"
-            f"{', needs calibration' if m.needs_calibration else ''})"
+            f"{', needs calibration' if m.needs_calibration else ''}{port_tag})"
         )
         lines.append(f"     {m.summary}")
+        if m.requires_port and m.port_reason:
+            lines.append(f"     Overlay port required: {m.port_reason}")
     lines.append("")
     lines.append(f"Tradeoffs: {report.tradeoffs}")
     return "\n".join(lines)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-os.environ.setdefault("ANTHROPIC_API_KEY", "sk-ant-test")
+os.environ.setdefault("OPENAI_API_KEY", "sk-test")
 
 from quant_agent.tools.recommender import Constraints, rank
 

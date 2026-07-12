@@ -30,13 +30,13 @@ import re
 import secrets
 from pathlib import Path
 
-from langchain_anthropic import ChatAnthropic
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 
 from . import executor
 from .adapt_stages import AdaptPlanSession, AdaptTrace, make_write_adapt_plan_tool
 from .config import load_settings
+from .llm import AgentStage, create_chat_model
 from .schemas import MethodCandidate
 from .tools import (
     clone_method_repo,
@@ -50,6 +50,11 @@ from .tools.model_arch import inspect_architecture_core
 from .tools.paper import read_paper_text
 from .tools.recommender import load_catalog
 from .tools.script_io import ValidationSession, make_write_script_tool
+from .port_overlay import (
+    PortOverlaySession,
+    make_write_port_overlay_tool,
+    validate_overlay_script,
+)
 
 log = logging.getLogger(__name__)
 
@@ -67,7 +72,9 @@ Determine only:
 2. whether the final script should use a stable standalone Python API or wrap a real
    repository entrypoint,
 3. the repository-relative entrypoint when wrapper style is selected,
-4. the files that prove these choices.
+4. whether the exact target model family is natively supported, requires a port, or
+   remains unknown, with concrete dispatch/source evidence,
+5. the files that prove these choices.
 
 Commands must be accepted by the restricted installer: python/python3/pip/pip3 only;
 no shell operators, redirects, curl, wget, arbitrary executables, or environment
@@ -97,13 +104,52 @@ Model config and architecture evidence:
 Tune-locked hyperparameters:
 {hyperparameters_block}
 
+Port overlay:
+{port_overlay_block}
+
 For standalone style, use the real installed API verified in repository source. For
 wrapper style, invoke only the plan's repository-relative entrypoint with exact flags
 verified from source or `python <entrypoint> --help`. Forward only PATH and an optional
 HF token to child processes. Every Hugging Face loader must use the target model and
 trust_remote_code value above. Save weights exactly to the requested output directory,
 print final on-disk size, and include tune-locked values in code and header comments.
+When a port overlay is present, the script MUST:
+- begin with the exact `# QUANT_AGENT_OVERLAY_DIR=...` line supplied above;
+- read the already-patched temporary repository from `QUANT_AGENT_METHOD_REPO`;
+- resolve `QUANT_AGENT_OVERLAY_DIR` for provenance when reporting the run;
+- for standalone style, prepend that repository to `sys.path` before importing the
+  method package; for wrapper style, execute the entrypoint with that repository as cwd;
+- execute the planned entrypoint from `QUANT_AGENT_METHOD_REPO`, never from the
+  canonical `.venvs/{method_id}/repo` checkout.
+The executor—not generated code—verifies the base commit, creates a detached worktree,
+checks/applies the overlay, snapshots it into the job, and removes the worktree.
 Stop immediately after write_script returns status=ok.
+"""
+
+_PORT_PROMPT = """You are the model-porting stage for a quantization research method.
+Upstream does not document the target model family, but all hard hardware/algorithm
+constraints pass. Create a minimal, reviewable unified-diff overlay; never edit the
+canonical checkout.
+
+Method: {method_name} ({method_id})
+Repository: .venvs/{method_id}/repo/
+Base commit: {base_commit}
+Target model: {model_id}
+Why a port is required: {port_reason}
+
+Repository plan:
+{adapt_plan}
+
+Target config and exact meta-device module tree:
+{architecture_evidence}
+
+Inspect the upstream implementation for its supported architecture dispatch, layer
+maps, transforms, calibration hooks, and save/load path. Compare those assumptions to
+the target module tree. Then call write_port_overlay exactly once with a git unified
+diff that makes the smallest architecture-specific change. New text files are allowed.
+Do not change the algorithm, bit-width, tune-locked values, or output semantics. Cite
+the repository files and paper sections used. If a safe port cannot be expressed,
+finish without writing an overlay so the stage fails closed.
 """
 
 def _format_hyperparameters_block(hyperparameters: dict | None) -> str:
@@ -191,7 +237,6 @@ def run(
         Use this when the repo README/examples don't make the API or hyperparameters clear."""
         return read_paper_text(arxiv_id, section=section)
 
-    llm = ChatAnthropic(model=s.model, api_key=s.anthropic_api_key, temperature=0)
     try:
         trace.record("acquire", "started")
         clone = _tool_payload(clone_method_repo.invoke({
@@ -206,7 +251,7 @@ def run(
         plan_session = AdaptPlanSession()
         write_adapt_plan = make_write_adapt_plan_tool(plan_session)
         plan_agent = create_react_agent(
-            llm,
+            create_chat_model(AgentStage.PLAN, s),
             [list_repo_dir, read_repo_file, read_paper, write_adapt_plan],
             prompt=_PLAN_PROMPT.format(
                 method_id=method.id, method_name=method.name, model_id=model_id,
@@ -256,7 +301,6 @@ def run(
             introspection_status=architecture_payload.get("status"),
         )
 
-        trace.record("generate", "started")
         session = ValidationSession(
             method_id=method.id,
             allowed_root=out_dir,
@@ -269,8 +313,62 @@ def run(
             "config": config_payload,
             "module_tree": architecture_payload,
         }, indent=2)
+
+        overlay_dir: Path | None = None
+        port_overlay_block = "(none — upstream support path will be used)"
+        needs_overlay = (
+            plan.model_support == "port_required"
+            or (method.requires_port and plan.model_support != "native")
+        )
+        if method.requires_port and plan.model_support == "native":
+            trace.record(
+                "port", "completed", skipped=True,
+                reason="repository planning found native target-family support",
+                evidence=plan.support_evidence,
+            )
+        if needs_overlay:
+            trace.record("port", "started", reason=method.port_reason)
+            overlay_session = PortOverlaySession(
+                root=out_dir / "overlays" / method.id / _safe_slug(model_id),
+                method_id=method.id,
+                model_id=model_id,
+                base_commit=clone.get("commit_sha"),
+            )
+            write_port_overlay = make_write_port_overlay_tool(overlay_session)
+            port_agent = create_react_agent(
+                create_chat_model(AgentStage.PORT, s),
+                [list_repo_dir, read_repo_file, read_paper, write_port_overlay],
+                prompt=_PORT_PROMPT.format(
+                    method_id=method.id,
+                    method_name=method.name,
+                    base_commit=clone.get("commit_sha") or "unknown",
+                    model_id=model_id,
+                    port_reason=method.port_reason or "model family is undocumented upstream",
+                    adapt_plan=plan.model_dump_json(indent=2),
+                    architecture_evidence=architecture_evidence,
+                ),
+            )
+            port_agent.invoke(
+                {"messages": [("user", "Create the minimal separate overlay port now.")]},
+                config={"recursion_limit": 50},
+            )
+            if overlay_session.overlay_dir is None or overlay_session.manifest is None:
+                raise RuntimeError("port stage finished without a validated overlay")
+            overlay_dir = overlay_session.overlay_dir
+            port_overlay_block = (
+                f"Overlay directory: {overlay_dir}\n"
+                f"Required header: # QUANT_AGENT_OVERLAY_DIR={overlay_dir}\n"
+                f"Manifest: {overlay_session.manifest.model_dump_json(indent=2)}\n"
+                f"Patch:\n{(overlay_dir / 'overlay.patch').read_text()}"
+            )
+            trace.record(
+                "port", "completed", overlay_dir=str(overlay_dir),
+                patch_sha256=overlay_session.manifest.patch_sha256,
+            )
+
+        trace.record("generate", "started")
         author_agent = create_react_agent(
-            llm,
+            create_chat_model(AgentStage.AUTHOR, s),
             [run_in_venv, list_repo_dir, read_repo_file, read_paper, write_script],
             prompt=_AUTHOR_PROMPT.format(
                 method_id=method.id,
@@ -284,6 +382,7 @@ def run(
                 adapt_plan=plan.model_dump_json(indent=2),
                 architecture_evidence=architecture_evidence,
                 hyperparameters_block=_format_hyperparameters_block(hyperparameters),
+                port_overlay_block=port_overlay_block,
             ),
         )
         author_agent.invoke(
@@ -292,6 +391,7 @@ def run(
         )
         trace.record("generate", "completed")
 
+        trace.record("validate", "started")
         expected = attempt_path.resolve()
         if session.validated_path is None or session.validated_path.resolve() != expected:
             raise RuntimeError(
@@ -299,8 +399,11 @@ def run(
             )
         if not attempt_path.exists():
             raise RuntimeError(f"validated Adapt artifact disappeared: {attempt_path}")
+        if overlay_dir is not None:
+            validate_overlay_script(attempt_path.read_text(), overlay_dir)
         trace.record("validate", "completed", path=str(expected))
 
+        trace.record("promote", "started")
         os.replace(attempt_path, script_path)
         trace.record("promote", "completed", path=str(script_path))
         trace.persist(trace_path)

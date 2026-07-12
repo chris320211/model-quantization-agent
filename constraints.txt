@@ -1,7 +1,7 @@
 # Reproducible direct-dependency set verified by the project test suite.
 # Method-specific CUDA environments have separate pins chosen at runtime.
 langchain==1.2.12
-langchain-anthropic==1.3.5
+langchain-openai==1.3.3
 langgraph==1.1.2
 huggingface-hub==1.5.0
 arxiv==3.0.0

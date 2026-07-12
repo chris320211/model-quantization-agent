@@ -46,8 +46,8 @@ def require_host_execution(operation: str) -> None:
 
 @dataclass(frozen=True)
 class Settings:
-    anthropic_api_key: str
-    model: str
+    openai_api_key: str
+    model_override: str | None
     seed_path: Path
     output_dir: Path
     github_token: str | None
@@ -55,7 +55,7 @@ class Settings:
 
 
 # Environment variables safe to expose to child processes. Deliberately excludes
-# every cloud credential (ANTHROPIC/GITHUB) — those are only needed by the parent
+# every cloud credential (OPENAI/GITHUB) — those are only needed by the parent
 # agent, never by a launched quantization script, a cloned repo's setup.py, or a
 # measurement subprocess. See child_env().
 _CHILD_ENV_ALLOWLIST: tuple[str, ...] = (
@@ -114,15 +114,15 @@ def load_settings() -> Settings:
     # Explicit, workspace-scoped loading avoids python-dotenv searching parent
     # directories at import time. Environment variables still take precedence.
     load_dotenv(REPO_ROOT / ".env")
-    key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    if not key or key.startswith("sk-ant-REPLACE"):
+    key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not key or key.startswith("sk-REPLACE"):
         raise RuntimeError(
-            "ANTHROPIC_API_KEY is not set. Run `quant-agent setup` or set it in the environment."
+            "OPENAI_API_KEY is not set. Run `quant-agent setup` or set it in the environment."
         )
 
     return Settings(
-        anthropic_api_key=key,
-        model=os.environ.get("QUANT_AGENT_MODEL", "claude-sonnet-4-6"),
+        openai_api_key=key,
+        model_override=os.environ.get("QUANT_AGENT_MODEL") or None,
         seed_path=DATA_ROOT / "methods.yaml",
         output_dir=REPO_ROOT / "out",
         github_token=os.environ.get("GITHUB_TOKEN") or None,

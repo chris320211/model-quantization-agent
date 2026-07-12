@@ -11,7 +11,7 @@ This skill writes `/home/ubuntu/model-quantization-agent/.env` (mode 600, gitign
 
 - User asks to "set up env / credentials", "configure HF token", "add my anthropic key", "store huggingface token".
 - A sibling skill bailed because `.env` was missing or `HF_TOKEN` was not set.
-- A run failed with HF `401`/`403` (gated repo) or `ANTHROPIC_API_KEY` errors.
+- A run failed with HF `401`/`403` (gated repo) or `OPENAI_API_KEY` errors.
 
 ## Decision: which path?
 
@@ -56,18 +56,17 @@ curl -sS -H "Authorization: Bearer $HF_TOKEN" https://huggingface.co/api/whoami-
 - `200` with a JSON body containing `name` / `email` → **valid**.
 - `401`/`403` → token is bad or missing scope. Ask the user to regenerate at https://huggingface.co/settings/tokens with read scope.
 
-### `ANTHROPIC_API_KEY`
+### `OPENAI_API_KEY`
 
-The Python CLI's `_validate_anthropic` does a 1-token live call. Mirror it:
+The Python CLI's `_validate_openai` checks authentication and default-model access. Mirror it:
 
 ```
 source /home/ubuntu/model-quantization-agent/.agents/skills/_shared/load_env.sh
 python3 -c "
-from anthropic import Anthropic
+from openai import OpenAI
 import os
-Anthropic(api_key=os.environ['ANTHROPIC_API_KEY']).messages.create(
-    model=os.environ.get('QUANT_AGENT_MODEL', 'claude-sonnet-4-6'),
-    max_tokens=1, messages=[{'role':'user','content':'hi'}],
+OpenAI(api_key=os.environ['OPENAI_API_KEY']).models.retrieve(
+    os.environ.get('QUANT_AGENT_MODEL', 'gpt-5.6-terra')
 )
 print('ok')
 "
@@ -111,10 +110,10 @@ chmod 600 /home/ubuntu/model-quantization-agent/.env
 
 | Key | Required? | Used by | Notes |
 |-----|-----------|---------|-------|
-| `ANTHROPIC_API_KEY` | yes (Python CLI) | quant-agent CLI | Skills call Codex through the Codex session, so skill-only flows do not strictly need this. The Python CLI does. |
+| `OPENAI_API_KEY` | yes (Python CLI) | quant-agent CLI | Skills call Codex through the Codex session, so skill-only flows do not strictly need this. The Python CLI does. |
 | `HUGGINGFACE_HUB_TOKEN` | for gated models | all skills + CLI | Loader aliases this to `HF_TOKEN` automatically. |
 | `GITHUB_TOKEN` | optional | all | Lifts GitHub API rate limits during README/example fetching. |
-| `QUANT_AGENT_MODEL` | optional | Python CLI | Model id override; defaults to `claude-sonnet-4-6`. |
+| `QUANT_AGENT_MODEL` | optional | Python CLI | Global model override. Stage defaults use `gpt-5.6-terra`, with `gpt-5.6-sol` for port/fix. |
 
 ## Cross-skill contract
 

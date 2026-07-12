@@ -81,3 +81,42 @@ def test_deterministic_block_canonicalizes_considered_reason():
     row = next(item for item in updated.considered if item.id == "fp8")
     assert row.verdict == "reject"
     assert "requires sm_90" in row.reason
+
+
+def test_port_required_finalist_is_annotated_not_rejected():
+    report = _minimal_report()
+    decision = CompatibilityDecision(
+        method_id="awq", status="port_required", model_family="qwen2",
+        reasons=[ConstraintReason(
+            code="undocumented_model_family",
+            message="no documented qwen2 support; attempt a separate overlay port",
+            source="capability",
+        )],
+    )
+    research_agent._require_no_blocked_finalists(report, [decision])
+    updated = research_agent._annotate_port_candidates(report, [decision])
+    candidate = next(method for method in updated.methods if method.id == "awq")
+    assert candidate.requires_port is True
+    assert "overlay port" in candidate.port_reason
+
+
+def test_port_required_considered_method_is_not_rejected_for_missing_support():
+    report = _minimal_report()
+    report = report.model_copy(update={
+        "considered": [
+            row.model_copy(update={"verdict": "reject"}) if row.id == "awq" else row
+            for row in report.considered
+        ]
+    })
+    decision = CompatibilityDecision(
+        method_id="awq", status="port_required", model_family="qwen2",
+        reasons=[ConstraintReason(
+            code="undocumented_model_family",
+            message="no documented qwen2 support; attempt a separate overlay port",
+            source="capability",
+        )],
+    )
+    updated = research_agent._canonicalize_port_verdicts(report, [decision])
+    row = next(item for item in updated.considered if item.id == "awq")
+    assert row.verdict == "include"
+    assert row.reason.startswith("overlay port path:")

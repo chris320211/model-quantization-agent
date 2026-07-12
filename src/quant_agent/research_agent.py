@@ -13,7 +13,6 @@ import logging
 import re
 from dataclasses import dataclass
 
-from langchain_anthropic import ChatAnthropic
 from pydantic import ValidationError
 
 from .compatibility import (
@@ -23,6 +22,7 @@ from .compatibility import (
     evaluate_catalog,
 )
 from .config import load_settings
+from .llm import AgentStage, create_chat_model
 from .hardware_probe import probe_live
 from .schemas import ResearchReport
 from .tools import hf_model_info
@@ -162,15 +162,21 @@ Deterministic constraint results (authoritative for status="blocked"):
 The deterministic engine has already evaluated catalog facts, requested backend/bit
 width, calibration/QAT policy, weight-memory estimates, documented compute capability,
 GPU architecture, and model-family constraints. You MUST reject every status="blocked"
-method using its reason. You may investigate and decide status="unknown" methods. An
-"eligible" status means only that hard constraints passed; it is not a ranking.
+method using its reason. A status="port_required" method is NOT incompatible: it may be
+a finalist, but its summary must explain that Adapt will attempt a reviewable overlay
+port because upstream does not document the target family. You may investigate and
+decide status="unknown" methods. An "eligible" status means only that hard constraints
+passed; it is not a ranking.
 
 Task — do these steps in order.
 
 1. Per-method walk. For EVERY catalog id above, emit one `considered` entry with:
-   - verdict: "include" if the method plausibly supports this model's architecture AND
+   - verdict: "include" if the method either supports this model natively OR its
+     architecture-specific assumptions can plausibly be ported with an overlay, AND it
      runs on this GPU (compute capability / kernel availability / bit-width support) AND
-     fits VRAM at a supported bit width. Otherwise "reject".
+     fits VRAM at a supported bit width. Otherwise "reject". Lack of documented model
+     support by itself is never a rejection reason; status="port_required" is explicitly
+     an include path.
    - reason: one line. Cite the specific axis that drove the decision: architecture
      compatibility (hf_info `architectures` vs the method's catalog notes),
      GPU/compute-capability fit (e.g. FP8 needs Hopper sm_90, Marlin kernels need Ampere
@@ -287,7 +293,7 @@ def run(user_input: str) -> ResearchReport:
     )
 
     s = load_settings()
-    llm = ChatAnthropic(model=s.model, api_key=s.anthropic_api_key, temperature=0)
+    llm = create_chat_model(AgentStage.RESEARCH, s)
     structured = llm.with_structured_output(ResearchReport)
 
     try:
@@ -307,6 +313,8 @@ def run(user_input: str) -> ResearchReport:
 
     _require_no_blocked_finalists(report, deterministic)
     report = _canonicalize_blocked_verdicts(report, deterministic)
+    report = _canonicalize_port_verdicts(report, deterministic)
+    report = _annotate_port_candidates(report, deterministic)
 
     return report.model_copy(
         update={
@@ -347,5 +355,43 @@ def _canonicalize_blocked_verdicts(
         considered.append(row.model_copy(update={
             "verdict": "reject",
             "reason": f"deterministic constraint: {reason}",
+        }))
+    return report.model_copy(update={"considered": considered})
+
+
+def _annotate_port_candidates(
+    report: ResearchReport, decisions: list[CompatibilityDecision]
+) -> ResearchReport:
+    """Attach deterministic port requirements to finalists without trusting LLM output."""
+    porting = {d.method_id: d for d in decisions if d.requires_port}
+    methods = []
+    for method in report.methods:
+        decision = porting.get(method.id)
+        if decision is None:
+            methods.append(method.model_copy(update={"requires_port": False, "port_reason": None}))
+            continue
+        reason = "; ".join(r.message for r in decision.reasons)
+        methods.append(method.model_copy(update={
+            "requires_port": True,
+            "port_reason": reason,
+        }))
+    return report.model_copy(update={"methods": methods})
+
+
+def _canonicalize_port_verdicts(
+    report: ResearchReport, decisions: list[CompatibilityDecision]
+) -> ResearchReport:
+    """Do not let missing upstream model support become a rejection by itself."""
+    porting = {d.method_id: d for d in decisions if d.requires_port}
+    considered = []
+    for row in report.considered:
+        decision = porting.get(row.id)
+        if decision is None:
+            considered.append(row)
+            continue
+        reason = "; ".join(r.message for r in decision.reasons)
+        considered.append(row.model_copy(update={
+            "verdict": "include",
+            "reason": f"overlay port path: {reason}",
         }))
     return report.model_copy(update={"considered": considered})

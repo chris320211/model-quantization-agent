@@ -5,7 +5,7 @@ description: Recommend and generate a HuggingFace model quantization script for 
 
 # Quant — model quantization research + script generator
 
-This skill replicates the `model-quantization-agent` Python package's Research and Adapt phases without calling the Anthropic API directly. You (Codex) do the work the LangChain agents would have done, using the bundled catalog files in `reference/` plus your built-in `Read`, `Write`, `Edit`, `Bash`, and `WebFetch` tools.
+This skill replicates the `model-quantization-agent` Python package's Research and Adapt phases without calling the configured OpenAI API directly. You (Codex) do the work the LangChain agents would have done, using the bundled catalog files in `reference/` plus your built-in `Read`, `Write`, `Edit`, `Bash`, and `WebFetch` tools.
 
 The skill stops after writing a validated script. It does not build venvs, does not run the script, does not supervise jobs, and does not have a Fix loop. Hand off to the sibling `quant-execute` skill to bootstrap + run, and then optionally to `quant-tune` to close the loop with hyperparameter iteration.
 

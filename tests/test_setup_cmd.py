@@ -36,6 +36,13 @@ def test_write_env_file_refuses_symlink(tmp_path):
 def test_format_env_rejects_assignment_injection():
     with pytest.raises(ValueError, match="forbidden"):
         setup_cmd._format_env({
-            "ANTHROPIC_API_KEY": "sk-ant-test",
+            "OPENAI_API_KEY": "sk-test",
             "QUANT_AGENT_MODEL": "safe\nGITHUB_TOKEN=attacker",
         })
+
+
+def test_format_env_preserves_stage_model_defaults_without_global_override():
+    rendered = setup_cmd._format_env({"OPENAI_API_KEY": "sk-test"})
+    assert "OPENAI_API_KEY=sk-test" in rendered
+    assert "# QUANT_AGENT_MODEL=gpt-5.6-terra" in rendered
+    assert "\nQUANT_AGENT_MODEL=" not in rendered

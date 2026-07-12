@@ -13,11 +13,11 @@ from __future__ import annotations
 import json
 import logging
 
-from langchain_anthropic import ChatAnthropic
 from langgraph.prebuilt import create_react_agent
 
 from . import executor
 from .config import load_settings
+from .llm import AgentStage, create_chat_model
 from .schemas import MethodCandidate
 from .tools import (
     edit_script,
@@ -189,7 +189,7 @@ def run(
         prior_attempts_block=_format_prior_attempts(prior_attempts, same_error),
     )
 
-    llm = ChatAnthropic(model=s.model, api_key=s.anthropic_api_key, temperature=0)
+    llm = create_chat_model(AgentStage.FIX, s)
     agent = create_react_agent(llm, tools, prompt=prompt)
 
     final_state = agent.invoke(

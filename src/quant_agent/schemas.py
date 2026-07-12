@@ -18,6 +18,11 @@ class MethodCandidate(BaseModel):
     speed_score: int = Field(..., ge=0, le=5, description="Kernel-level speedup 0-5.")
     needs_calibration: bool
     summary: str = Field(..., description="2-3 sentence why/when for this method.")
+    requires_port: bool = Field(
+        False,
+        description="True when upstream does not document the target model family and Adapt must create an overlay.",
+    )
+    port_reason: str | None = None
     hyperparameters: dict[str, Any] | None = Field(
         None,
         description="Method-specific hyperparameter values "

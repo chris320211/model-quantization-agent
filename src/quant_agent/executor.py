@@ -20,6 +20,7 @@ import os
 import re
 import secrets
 import shlex
+import shutil
 import signal
 import subprocess
 import time
@@ -31,6 +32,11 @@ from contextlib import contextmanager
 from .config import REPO_ROOT, child_env, load_settings, require_host_execution
 from .execution_policy import ExecutionMode, ExecutionPolicy
 from .reproducibility import build_manifest, write_manifest_atomic
+from .port_overlay import (
+    directory_sha256,
+    overlay_path_from_script,
+    validate_overlay_bundle,
+)
 
 JOBS_ROOT = REPO_ROOT / "jobs"
 VENV_ROOT = REPO_ROOT / ".venvs"
@@ -64,6 +70,9 @@ class JobMeta:
     termination_confirmed: bool | None = None
     manifest_path: str | None = None
     execution_mode: str = "host"
+    overlay_path: str | None = None
+    overlay_sha256: str | None = None
+    worktree_path: str | None = None
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), indent=2)
@@ -139,6 +148,64 @@ def default_output_dir(method_id: str, model_id: str) -> str:
     return f"./quantized/{method_id}-{model_id.replace('/', '__')}"
 
 
+def _run_git(args: list[str], *, timeout: int = 120) -> None:
+    try:
+        result = subprocess.run(
+            ["git", *args], capture_output=True, text=True, timeout=timeout,
+            env=child_env(include_hf=False),
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(f"git overlay operation failed to start: {exc}") from exc
+    if result.returncode != 0:
+        tail = (result.stderr or result.stdout or "git operation failed").splitlines()[-20:]
+        raise RuntimeError("git overlay operation failed:\n" + "\n".join(tail))
+
+
+def _cleanup_overlay_worktree(method_id: str, worktree: Path) -> None:
+    repo = VENV_ROOT / method_id / "repo"
+    try:
+        subprocess.run(
+            ["git", "-C", str(repo), "worktree", "remove", "--force", str(worktree)],
+            capture_output=True, text=True, timeout=30, env=child_env(include_hf=False),
+        )
+        subprocess.run(
+            ["git", "-C", str(repo), "worktree", "prune"],
+            capture_output=True, text=True, timeout=30, env=child_env(include_hf=False),
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
+    if worktree.exists():
+        shutil.rmtree(worktree, ignore_errors=True)
+
+
+def _prepare_overlay_worktree(
+    method_id: str,
+    overlay_manifest,
+    overlay_snapshot: Path,
+    job_dir: Path,
+) -> Path:
+    """Apply a validated overlay to a detached worktree, never the canonical clone."""
+    repo = VENV_ROOT / method_id / "repo"
+    if not (repo / ".git").exists():
+        raise RuntimeError(f"canonical method checkout is missing: {repo}")
+    commit = overlay_manifest.base_commit
+    if not commit or not re.fullmatch(r"[0-9a-fA-F]{40}", commit):
+        raise RuntimeError("port overlay requires an exact 40-character base commit")
+    worktree = job_dir / "method-repo"
+    try:
+        _run_git(["-C", str(repo), "cat-file", "-e", f"{commit}^{{commit}}"])
+        _run_git([
+            "-C", str(repo), "worktree", "add", "--detach", str(worktree), commit,
+        ])
+        patch = overlay_snapshot / "overlay.patch"
+        _run_git(["-C", str(worktree), "apply", "--check", str(patch)])
+        _run_git(["-C", str(worktree), "apply", str(patch)])
+    except Exception:
+        _cleanup_overlay_worktree(method_id, worktree)
+        raise
+    return worktree
+
+
 def launch(
     method_id: str,
     model_id: str,
@@ -150,6 +217,7 @@ def launch(
     tune_iter: int = 0,
     hyperparameters: dict | None = None,
     execution_policy: ExecutionPolicy | None = None,
+    overlay_source: str | Path | None = None,
 ) -> JobMeta:
     """Spawn the quantization script in its method venv, detached from the agent."""
     policy = execution_policy or ExecutionPolicy.host()
@@ -168,6 +236,35 @@ def launch(
 
     script_path = job_dir / "script.py"
     script_path.write_text(script_code)
+
+    overlay_snapshot: Path | None = None
+    overlay_sha256: str | None = None
+    overlay_manifest = None
+    detected_overlay = Path(overlay_source).resolve() if overlay_source else overlay_path_from_script(script_code)
+    if detected_overlay is not None:
+        allowed_overlay_root = (REPO_ROOT / "out" / "overlays").resolve()
+        jobs_root = JOBS_ROOT.resolve()
+        from_generated_output = allowed_overlay_root in detected_overlay.parents
+        from_prior_job = (
+            jobs_root in detected_overlay.parents
+            and detected_overlay.name == "overlay"
+            and valid_job_id(detected_overlay.parent.name)
+        )
+        if not (from_generated_output or from_prior_job):
+            raise RuntimeError(
+                "port overlay must come from generated output or a prior job snapshot: "
+                f"{detected_overlay}"
+            )
+        overlay_manifest = validate_overlay_bundle(detected_overlay)
+        if overlay_manifest.method_id != method_id or overlay_manifest.model_id != model_id:
+            raise RuntimeError(
+                "port overlay identity does not match launch request: "
+                f"{overlay_manifest.method_id}/{overlay_manifest.model_id}"
+            )
+        overlay_snapshot = job_dir / "overlay"
+        shutil.copytree(detected_overlay, overlay_snapshot)
+        validate_overlay_bundle(overlay_snapshot)
+        overlay_sha256 = directory_sha256(overlay_snapshot)
 
     command_argv = policy.command_argv(
         host_python=py,
@@ -190,8 +287,17 @@ def launch(
         method_repo_dir=VENV_ROOT / method_id / "repo",
         created_at=started_at,
         execution_command=command_argv,
+        overlay_sha256=overlay_sha256,
+        overlay_snapshot_path=str(overlay_snapshot) if overlay_snapshot else None,
     )
     manifest_path = write_manifest_atomic(manifest, job_dir)
+
+    method_worktree: Path | None = None
+    if overlay_snapshot is not None:
+        assert overlay_manifest is not None
+        method_worktree = _prepare_overlay_worktree(
+            method_id, overlay_manifest, overlay_snapshot, job_dir
+        )
 
     stdout = (job_dir / "stdout.log").open("wb")
     stderr = (job_dir / "stderr.log").open("wb")
@@ -201,7 +307,17 @@ def launch(
     # child process has been reaped. Paths go through shlex.quote so method_id
     # or job_id values never cross into shell-interpreted territory.
     quoted_command = " ".join(shlex.quote(arg) for arg in command_argv)
-    wrapper = f"{quoted_command}; echo $? > {shlex.quote(str(exit_sentinel))}"
+    if method_worktree is not None:
+        repo = VENV_ROOT / method_id / "repo"
+        cleanup = " ".join(shlex.quote(part) for part in [
+            "git", "-C", str(repo), "worktree", "remove", "--force", str(method_worktree),
+        ])
+        wrapper = (
+            f"{quoted_command}; code=$?; {cleanup}; "
+            f"echo $code > {shlex.quote(str(exit_sentinel))}"
+        )
+    else:
+        wrapper = f"{quoted_command}; echo $? > {shlex.quote(str(exit_sentinel))}"
     try:
         proc = subprocess.Popen(
             ["bash", "-c", wrapper],
@@ -212,8 +328,19 @@ def launch(
             start_new_session=True,  # setsid: survives SSH disconnect (SIGHUP)
             # Minimal allowlisted env: the generated script/container launcher must
             # never inherit the parent's cloud secrets. HF model access is opt-in.
-            env=child_env(include_hf=True),
+            env=child_env(
+                {
+                    "QUANT_AGENT_OVERLAY_DIR": str(overlay_snapshot),
+                    "QUANT_AGENT_METHOD_REPO": str(method_worktree),
+                }
+                if overlay_snapshot and method_worktree else None,
+                include_hf=True,
+            ),
         )
+    except Exception:
+        if method_worktree is not None:
+            _cleanup_overlay_worktree(method_id, method_worktree)
+        raise
     finally:
         stdout.close()
         stderr.close()
@@ -242,6 +369,9 @@ def launch(
         hyperparameters=hyperparameters,
         manifest_path=str(manifest_path),
         execution_mode=policy.mode.value,
+        overlay_path=str(overlay_snapshot) if overlay_snapshot else None,
+        overlay_sha256=overlay_sha256,
+        worktree_path=str(method_worktree) if method_worktree else None,
     )
     write_meta(meta)
     return meta
@@ -255,6 +385,11 @@ def _read_meta(job_id: str) -> JobMeta:
     with path.open() as f:
         d = json.load(f)
     return JobMeta(**d)
+
+
+def _cleanup_meta_worktree(meta: JobMeta) -> None:
+    if meta.worktree_path:
+        _cleanup_overlay_worktree(meta.method_id, Path(meta.worktree_path))
 
 
 @contextmanager
@@ -295,6 +430,7 @@ def refresh_status(job_id: str) -> JobMeta:
     """Re-evaluate whether the job is still alive and persist the result."""
     meta = _read_meta(job_id)
     if meta.status in {"completed", "failed", "killed", "timeout", "termination_failed"}:
+        _cleanup_meta_worktree(meta)
         return meta
 
     exit_sentinel = JOBS_ROOT / job_id / "exit_code"
@@ -310,6 +446,7 @@ def refresh_status(job_id: str) -> JobMeta:
         meta.exit_code = code
         meta.status = "completed" if code == 0 else "failed"
         meta.finished_at = datetime.now(timezone.utc).isoformat()
+        _cleanup_meta_worktree(meta)
         _write_meta(meta)
         return meta
 
@@ -317,6 +454,7 @@ def refresh_status(job_id: str) -> JobMeta:
         # process gone but no sentinel — probably killed externally
         meta.status = "killed"
         meta.finished_at = datetime.now(timezone.utc).isoformat()
+        _cleanup_meta_worktree(meta)
         _write_meta(meta)
     return meta
 
@@ -380,6 +518,7 @@ def wait_for_job(
             meta.terminal_reason = f"exceeded max_wait_s={max_wait_s}"
             meta.termination_confirmed = confirmed
             meta.finished_at = datetime.now(timezone.utc).isoformat()
+            _cleanup_meta_worktree(meta)
             _write_meta(meta)
             return meta
         time.sleep(poll_interval)
@@ -480,6 +619,7 @@ def kill(job_id: str) -> JobMeta:
     meta.terminal_reason = "user requested termination"
     meta.termination_confirmed = confirmed
     meta.finished_at = datetime.now(timezone.utc).isoformat()
+    _cleanup_meta_worktree(meta)
     _write_meta(meta)
     return meta
 

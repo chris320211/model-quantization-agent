@@ -28,6 +28,15 @@ def test_plan_session_is_single_assignment():
     assert session.plan is not None
 
 
+def test_adapt_plan_records_repository_model_support_evidence():
+    plan = AdaptPlan(
+        install_steps=[], script_style="standalone", model_support="native",
+        support_evidence=["awq/models/auto.py dispatches Qwen2ForCausalLM"],
+    )
+    assert plan.model_support == "native"
+    assert "Qwen2" in plan.support_evidence[0]
+
+
 def test_trace_persists_typed_stage_records(tmp_path):
     trace = AdaptTrace(model_id="org/model", method_id="awq")
     trace.record("prepare", "completed", output="x.py")

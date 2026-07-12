@@ -5,16 +5,31 @@ be evaluated mechanically are enforced by normal code; language models are used
 for incomplete repository/paper evidence, script authoring, diagnosis, and human
 explanations.
 
+## Model-provider boundary
+
+All language-model stages are constructed through `src/quant_agent/llm.py` and use
+OpenAI's Responses API with response storage disabled (`store=False`). The default
+policy uses `gpt-5.6-terra` for research, repository planning, script authoring,
+tuning, and hyperparameter extraction. The higher-reasoning port and repair stages
+use `gpt-5.6-sol`. This boundary prevents provider configuration from being spread
+through agent modules and makes model/cost policy independently testable.
+
+Global `QUANT_AGENT_MODEL` and `QUANT_AGENT_REASONING_EFFORT` overrides are
+supported. Stage-specific `QUANT_AGENT_<STAGE>_MODEL` and
+`QUANT_AGENT_<STAGE>_REASONING_EFFORT` take precedence.
+
 ## Research and selection
 
 1. Resolve the model and target hardware.
 2. Build a `CompatibilityRequest` from model architecture, parameters, GPU facts,
    requested bit width/backend, and calibration/QAT policy.
 3. Evaluate every catalog method with `compatibility.evaluate_catalog`.
-4. Give each method one of three statuses:
+4. Give each method one of four statuses:
    - `blocked`: a hard fact failed and the Research model cannot override it;
    - `eligible`: all hard constraints pass and relevant family evidence exists;
-   - `unknown`: nothing failed, but the evidence is incomplete.
+   - `port_required`: hard constraints pass, but upstream does not document the
+     target model family; the method remains selectable;
+   - `unknown`: nothing failed, but non-family evidence is incomplete.
 5. The Research model investigates unknowns, chooses 3–8 finalists, and explains
    tradeoffs. Schema validation and a second deterministic check reject any
    blocked finalist.
@@ -32,9 +47,18 @@ Adapt is split into bounded stages with typed artifacts:
 3. **plan** — inspect repository documentation/source and emit an `AdaptPlan`;
 4. **environment** — execute the restricted install plan in the method venv;
 5. **architecture** — fetch model config and inspect the meta-device module tree;
-6. **generate** — author a script from the immutable plan and architecture facts;
-7. **validate** — fail-closed staged validation;
-8. **promote** — atomically replace the stable output only after validation.
+6. **port** — when required, compare upstream architecture assumptions with the
+   target tree and write a content-addressed unified-diff overlay;
+7. **generate** — author a script from the immutable plan and architecture facts;
+8. **validate** — fail-closed staged validation;
+9. **promote** — atomically replace the stable output only after validation.
+
+The port overlay lives under `out/overlays/<method>/<model>/<patch-hash>/` with
+`overlay.patch` and `manifest.json`. At launch the executor verifies the base commit,
+snapshots and hashes the overlay under `jobs/<id>/overlay/`, creates a temporary
+detached Git worktree, and checks/applies the patch there. Generated code receives the
+patched checkout through `QUANT_AGENT_METHOD_REPO`; the canonical
+`.venvs/<method>/repo` remains unchanged. Repair edits cannot remove this contract.
 
 Every attempt writes `<script>.adapt.json`, which records completed/failed stages
 without credentials. A failed attempt never promotes its temporary script.
@@ -62,8 +86,8 @@ uses a fixed placeholder allowlist, and safely quotes every rendered argument.
 
 Every job writes `jobs/<id>/reproducibility.json` atomically. It includes the
 script hash, model/method ids, output path, execution mode, platform/Python,
-best-effort package and CUDA/GPU details, and the cloned method commit. The record
-is secret-free and referenced by `JobMeta.manifest_path`.
+best-effort package and CUDA/GPU details, the cloned method commit, and any overlay
+snapshot hash. The record is secret-free and referenced by `JobMeta.manifest_path`.
 
 Container execution is an opt-in policy API rather than a security claim about an
 arbitrary image. A production deployment must provide a pinned image, read-only

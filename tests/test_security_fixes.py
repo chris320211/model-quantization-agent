@@ -21,7 +21,7 @@ from quant_agent.config import child_env
 
 def test_child_env_excludes_cloud_secrets(monkeypatch):
     for k in (
-        "ANTHROPIC_API_KEY", "VOYAGE_API_KEY", "QDRANT_API_KEY",
+        "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "VOYAGE_API_KEY", "QDRANT_API_KEY",
         "R2_SECRET_ACCESS_KEY", "R2_ACCESS_KEY_ID", "GITHUB_TOKEN",
     ):
         monkeypatch.setenv(k, "secret-" + k)
@@ -29,7 +29,7 @@ def test_child_env_excludes_cloud_secrets(monkeypatch):
     monkeypatch.setenv("PATH", os.environ.get("PATH", "/usr/bin"))
 
     env = child_env(include_hf=True)
-    for k in ("ANTHROPIC_API_KEY", "VOYAGE_API_KEY", "QDRANT_API_KEY",
+    for k in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "VOYAGE_API_KEY", "QDRANT_API_KEY",
               "R2_SECRET_ACCESS_KEY", "R2_ACCESS_KEY_ID", "GITHUB_TOKEN"):
         assert k not in env, f"{k} leaked into child env"
     assert env["HUGGINGFACE_HUB_TOKEN"] == "hf-tok"
@@ -72,7 +72,7 @@ def test_venv_command_policy_converts_python_and_pip_to_argv(tmp_path):
 
 def test_installer_runner_does_not_receive_hf_or_cloud_tokens(monkeypatch):
     monkeypatch.setenv("HUGGINGFACE_HUB_TOKEN", "hf-secret")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-secret")
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-secret")
     captured = {}
 
     def fake_run(*args, **kwargs):
@@ -84,11 +84,11 @@ def test_installer_runner_does_not_receive_hf_or_cloud_tokens(monkeypatch):
     assert result["ok"] is True
     assert "HF_TOKEN" not in captured["env"]
     assert "HUGGINGFACE_HUB_TOKEN" not in captured["env"]
-    assert "ANTHROPIC_API_KEY" not in captured["env"]
+    assert "OPENAI_API_KEY" not in captured["env"]
 
 
 def test_child_env_extra_merges(monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     env = child_env({"MEASURE_MODEL_PATH": "/x"})
     assert env["MEASURE_MODEL_PATH"] == "/x"
 

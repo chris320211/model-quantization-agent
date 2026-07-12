@@ -20,10 +20,10 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from langchain_anthropic import ChatAnthropic
 from pydantic import BaseModel, Field, ValidationError
 
 from .config import load_settings
+from .llm import AgentStage, create_chat_model
 from .schemas import MethodCandidate
 from .tools import github_readme
 from .tools.recommender import load_catalog
@@ -152,7 +152,7 @@ README:
 
 def _query_llm(method: MethodCandidate, readme: str) -> HyperparamRanges:
     s = load_settings()
-    llm = ChatAnthropic(model=s.model, api_key=s.anthropic_api_key, temperature=0)
+    llm = create_chat_model(AgentStage.HYPERPARAM, s)
     structured = llm.with_structured_output(HyperparamRanges)
     prompt = _LLM_PROMPT.format(method_id=method.id, readme=readme[:50_000])
     return structured.invoke(prompt)

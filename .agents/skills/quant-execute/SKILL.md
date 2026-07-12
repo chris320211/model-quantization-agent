@@ -101,7 +101,7 @@ echo $! > jobs/<job_id>/pid
 
 The loader parses a mode-600 credential file without executing shell syntax. The
 `env -i` boundary above forwards only PATH, HOME, and the two HF token aliases to
-generated code; Anthropic and GitHub credentials remain in the supervising shell.
+generated code; OpenAI and GitHub credentials remain in the supervising shell.
 
 If the loader returns non-zero (no `.env`, or `HF_TOKEN`/`HUGGINGFACE_HUB_TOKEN` missing for a gated model), **don't launch yet** — direct the user to the `/quant-setup` skill (or `quant-agent setup` in a real terminal for hidden input). This is a launch-time precondition, not a runtime fix.
 

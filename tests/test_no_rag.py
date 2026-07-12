@@ -24,20 +24,23 @@ def test_settings_has_no_rag_credential_fields():
         "r2_bucket_name",
     ):
         assert gone not in fields, f"{gone} should have been removed from Settings"
-    assert {"anthropic_api_key", "model", "seed_path", "output_dir", "github_token", "hf_token"} <= fields
+    assert {
+        "openai_api_key", "model_override", "seed_path", "output_dir",
+        "github_token", "hf_token",
+    } <= fields
 
 
-def test_load_settings_requires_only_anthropic(monkeypatch):
+def test_load_settings_requires_only_openai(monkeypatch):
     config.load_settings.cache_clear()
     for k in (
         "VOYAGE_API_KEY", "QDRANT_URL", "QDRANT_API_KEY",
         "R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET_NAME",
     ):
         monkeypatch.delenv(k, raising=False)
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-key")
     try:
         s = config.load_settings()
-        assert s.anthropic_api_key == "sk-ant-test-key"
+        assert s.openai_api_key == "sk-test-key"
     finally:
         config.load_settings.cache_clear()
 

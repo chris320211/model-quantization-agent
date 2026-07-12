@@ -5,12 +5,12 @@ import os
 
 import pytest
 
-# config.load_settings() rejects the .env.example placeholder ("sk-ant-REPLACE..."),
+# config.load_settings() rejects the placeholder key,
 # so overwrite it for test runs before anything imports quant_agent.
-if os.environ.get("ANTHROPIC_API_KEY", "").startswith("sk-ant-REPLACE") or not os.environ.get(
-    "ANTHROPIC_API_KEY"
+if os.environ.get("OPENAI_API_KEY", "").startswith("sk-REPLACE") or not os.environ.get(
+    "OPENAI_API_KEY"
 ):
-    os.environ["ANTHROPIC_API_KEY"] = "sk-ant-test"
+    os.environ["OPENAI_API_KEY"] = "sk-test"
 
 
 @pytest.fixture(autouse=True)

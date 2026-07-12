@@ -18,6 +18,8 @@ class AdaptPlan(BaseModel):
     install_steps: list[str] = Field(default_factory=list, max_length=12)
     entrypoint: str | None = None
     script_style: Literal["standalone", "wrapper"]
+    model_support: Literal["native", "port_required", "unknown"] = "unknown"
+    support_evidence: list[str] = Field(default_factory=list, max_length=20)
     evidence_files: list[str] = Field(default_factory=list, max_length=12)
     notes: str = ""
 
@@ -42,7 +44,7 @@ class AdaptPlan(BaseModel):
 class AdaptStageRecord(BaseModel):
     name: Literal[
         "prepare", "acquire", "plan", "environment", "architecture",
-        "generate", "validate", "promote",
+        "port", "generate", "validate", "promote",
     ]
     status: Literal["started", "completed", "failed"]
     timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -84,6 +86,8 @@ def make_write_adapt_plan_tool(session: AdaptPlanSession):
         install_steps: list[str],
         script_style: Literal["standalone", "wrapper"],
         entrypoint: str | None = None,
+        model_support: Literal["native", "port_required", "unknown"] = "unknown",
+        support_evidence: list[str] | None = None,
         evidence_files: list[str] | None = None,
         notes: str = "",
     ) -> str:
@@ -97,6 +101,8 @@ def make_write_adapt_plan_tool(session: AdaptPlanSession):
             install_steps=install_steps,
             script_style=script_style,
             entrypoint=entrypoint,
+            model_support=model_support,
+            support_evidence=support_evidence or [],
             evidence_files=evidence_files or [],
             notes=notes,
         ), indent=2)

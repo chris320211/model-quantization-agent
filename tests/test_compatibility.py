@@ -72,7 +72,7 @@ def test_capability_hardware_and_family_constraints_are_enforced():
     assert decision.status == "blocked"
     codes = {r.code for r in decision.reasons}
     assert "compute_capability_too_low" in codes
-    assert "model_family_not_supported" in codes
+    assert "model_family_port_required" in codes
 
 
 def test_partial_documented_family_list_does_not_become_a_false_denylist():
@@ -81,8 +81,8 @@ def test_partial_documented_family_list_does_not_become_a_false_denylist():
         CompatibilityRequest(architectures=["Qwen2ForCausalLM"]),
         {"supported_families": ["llama"]},
     )
-    assert decision.status == "unknown"
-    assert "model_family_not_supported" not in {r.code for r in decision.reasons}
+    assert decision.status == "port_required"
+    assert "model_family_port_required" not in {r.code for r in decision.reasons}
 
 
 def test_kv_only_is_blocked_unless_requested():
@@ -102,6 +102,17 @@ def test_documented_capability_turns_unknown_into_eligible():
         {"supported_families": ["llama"]},
     )
     assert decision.status == "eligible"
+
+
+def test_explicit_family_mismatch_requests_port_instead_of_blocking():
+    decision = evaluate_method(
+        _method(),
+        CompatibilityRequest(architectures=["Qwen2ForCausalLM"]),
+        {"supported_families": ["llama"], "family_policy": "allowlist"},
+    )
+    assert decision.status == "port_required"
+    assert decision.hard_blocked is False
+    assert decision.requires_port is True
 
 
 def test_packaged_capability_dataset_covers_catalog_with_pinned_sources():

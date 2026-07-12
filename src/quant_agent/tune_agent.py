@@ -22,10 +22,10 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from langchain_anthropic import ChatAnthropic
 from pydantic import BaseModel, Field, ValidationError
 
 from .config import load_settings
+from .llm import AgentStage, create_chat_model
 from .hyperparam_inference import HyperparamRanges
 from .pareto import Metrics
 from .schemas import MethodCandidate
@@ -152,7 +152,7 @@ def propose(
         return TuneDecision(decision="stop", reason="No tunable ranges available for this method.")
 
     s = load_settings()
-    llm = ChatAnthropic(model=s.model, api_key=s.anthropic_api_key, temperature=0)
+    llm = create_chat_model(AgentStage.TUNE, s)
     structured = llm.with_structured_output(TuneDecision)
 
     prompt = _PROMPT.format(

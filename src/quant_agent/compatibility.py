@@ -14,6 +14,10 @@ auditable decision for every catalog method:
 ``unknown``
     No hard constraint failed, but capability evidence is incomplete. Research may
     investigate the paper/repository and decide whether to include the method.
+``port_required``
+    Hardware and algorithm constraints pass, but the target model family is not a
+    documented implementation target. The method remains selectable and Adapt must
+    create a separate overlay rather than treating this as incompatibility.
 
 The packaged ``method_capabilities.yaml`` is deliberately separate from
 ``methods.yaml``: the latter is the product catalog, while the former records
@@ -57,7 +61,7 @@ class ConstraintReason(BaseModel):
 
 class CompatibilityDecision(BaseModel):
     method_id: str
-    status: Literal["eligible", "blocked", "unknown"]
+    status: Literal["eligible", "blocked", "unknown", "port_required"]
     chosen_bits: int | None = None
     model_family: str | None = None
     reasons: list[ConstraintReason] = Field(default_factory=list)
@@ -65,6 +69,10 @@ class CompatibilityDecision(BaseModel):
     @property
     def hard_blocked(self) -> bool:
         return self.status == "blocked"
+
+    @property
+    def requires_port(self) -> bool:
+        return self.status == "port_required"
 
 
 _FAMILY_ALIASES: tuple[tuple[str, str], ...] = (
@@ -244,10 +252,13 @@ def evaluate_method(
     unsupported_families = {
         str(v).strip().lower() for v in (capability.get("unsupported_families") or [])
     }
+    port_required = False
     if family and family in unsupported_families:
-        blocked = True
+        port_required = True
         reasons.append(_reason(
-            "model_family_denied", f"{family} is explicitly unsupported", "capability"
+            "model_family_port_required",
+            f"{family} is not implemented upstream; an isolated overlay port is required",
+            "capability",
         ))
     elif (
         family
@@ -255,10 +266,10 @@ def evaluate_method(
         and family not in supported_families
         and capability.get("family_policy") == "allowlist"
     ):
-        blocked = True
+        port_required = True
         reasons.append(_reason(
-            "model_family_not_supported",
-            f"documented families are {sorted(supported_families)}; target is {family}",
+            "model_family_port_required",
+            f"documented families are {sorted(supported_families)}; target {family} requires an overlay port",
             "capability",
         ))
 
@@ -290,17 +301,19 @@ def evaluate_method(
         or capability.get("family_policy") == "unrestricted"
     )
     if blocked:
-        status: Literal["eligible", "blocked", "unknown"] = "blocked"
+        status: Literal["eligible", "blocked", "unknown", "port_required"] = "blocked"
+    elif port_required:
+        status = "port_required"
     elif family_evidence_known:
         status = "eligible"
         reasons.append(_reason(
             "hard_constraints_pass", "all known deterministic constraints pass", "request"
         ))
     else:
-        status = "unknown"
+        status = "port_required"
         reasons.append(_reason(
-            "missing_family_evidence",
-            f"no documented model-family evidence for {family}",
+            "undocumented_model_family",
+            f"no documented {family} support; attempt a separate overlay port",
             "capability",
         ))
 

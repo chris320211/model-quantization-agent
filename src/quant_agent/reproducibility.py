@@ -46,6 +46,8 @@ class ReproducibilityManifest:
     gpu_cuda: dict[str, Any]
     method_repo_commit: str | None
     execution_command: tuple[str, ...] = ()
+    overlay_sha256: str | None = None
+    overlay_snapshot_path: str | None = None
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), indent=2, sort_keys=True)
@@ -135,6 +137,8 @@ def build_manifest(
     method_repo_dir: Path,
     created_at: str | None = None,
     execution_command: list[str] | tuple[str, ...] = (),
+    overlay_sha256: str | None = None,
+    overlay_snapshot_path: str | None = None,
 ) -> ReproducibilityManifest:
     return ReproducibilityManifest(
         schema_version=MANIFEST_SCHEMA_VERSION,
@@ -158,6 +162,8 @@ def build_manifest(
         gpu_cuda=_gpu_cuda_info(),
         method_repo_commit=_method_repo_commit(method_repo_dir),
         execution_command=tuple(execution_command),
+        overlay_sha256=overlay_sha256,
+        overlay_snapshot_path=overlay_snapshot_path,
     )
 
 

@@ -8,6 +8,7 @@ from pathlib import Path
 from langchain_core.tools import tool
 
 from .. import executor
+from ..port_overlay import overlay_path_from_script, validate_overlay_script
 
 
 @tool
@@ -48,6 +49,8 @@ def execute_quantization(
             "script_path": meta.script_path,
             "manifest_path": meta.manifest_path,
             "execution_mode": meta.execution_mode,
+            "overlay_path": meta.overlay_path,
+            "overlay_sha256": meta.overlay_sha256,
             "message": (
                 f"Job {meta.job_id} started. Use check_job('{meta.job_id}') to poll, "
                 f"tail_job_logs('{meta.job_id}') for logs."
@@ -201,6 +204,20 @@ def edit_script(job_id: str, old: str, new: str) -> str:
                 "error": f"edit produced syntax error: {e.msg} at line {e.lineno}",
             }
         )
+    original_overlay = overlay_path_from_script(text)
+    if original_overlay is not None:
+        if overlay_path_from_script(new_text) != original_overlay:
+            return json.dumps({
+                "status": "error",
+                "error": "edit would modify or remove the protected port-overlay header",
+            })
+        try:
+            validate_overlay_script(new_text, original_overlay)
+        except ValueError as e:
+            return json.dumps({
+                "status": "error",
+                "error": f"edit would break the port-overlay contract: {e}",
+            })
     script.write_text(new_text)
     return json.dumps(
         {"status": "ok", "path": str(script), "bytes": len(new_text)}, indent=2
@@ -255,6 +272,7 @@ def relaunch_job(job_id: str, fix_description: str) -> str:
             fix_note=fix_description.strip() or None,
             tune_iter=parent.tune_iter,
             hyperparameters=parent.hyperparameters,
+            overlay_source=parent.overlay_path,
         )
     except (ValueError, RuntimeError) as e:
         return json.dumps({"status": "error", "error": str(e)})

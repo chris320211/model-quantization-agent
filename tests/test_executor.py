@@ -2,12 +2,19 @@ from __future__ import annotations
 
 import json
 import hashlib
+import subprocess
 from dataclasses import asdict
 from pathlib import Path
 
 import pytest
 
 from quant_agent.executor import JobMeta
+
+
+def _git(*args, cwd=None):
+    return subprocess.run(
+        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True,
+    ).stdout.strip()
 
 
 def test_jobmeta_round_trip_with_retry_fields():
@@ -212,6 +219,31 @@ def test_edit_script_cannot_change_tune_locked_block(tmp_path, monkeypatch):
     assert "group_size=128" in script.read_text()
 
 
+def test_edit_script_cannot_remove_port_overlay_contract(tmp_path, monkeypatch):
+    from quant_agent import executor
+    from quant_agent.tools.executor_tools import edit_script
+
+    job_id = "20260711T000000Z-abc123"
+    job = tmp_path / job_id
+    job.mkdir()
+    overlay = tmp_path / "out" / "overlays" / "awq" / "model" / "hash"
+    text = (
+        f"# QUANT_AGENT_OVERLAY_DIR={overlay}\n"
+        "import os\nOVERLAY = os.environ['QUANT_AGENT_OVERLAY_DIR']\n"
+        "REPO = os.environ['QUANT_AGENT_METHOD_REPO']\n"
+    )
+    (job / "script.py").write_text(text)
+    monkeypatch.setattr(executor, "JOBS_ROOT", tmp_path)
+    payload = json.loads(edit_script.invoke({
+        "job_id": job_id,
+        "old": "REPO = os.environ['QUANT_AGENT_METHOD_REPO']",
+        "new": "REPO = '/canonical/repo'",
+    }))
+    assert payload["status"] == "error"
+    assert "port-overlay contract" in payload["error"]
+    assert (job / "script.py").read_text() == text
+
+
 def test_container_command_plan_renders_without_shell_interpolation():
     from quant_agent.execution_policy import ContainerCommandPlan, ExecutionPolicy
 
@@ -390,3 +422,117 @@ def test_relaunch_refuses_to_downgrade_container_job_to_host(tmp_path, monkeypat
     }))
     assert payload["status"] == "error"
     assert "refusing to downgrade" in payload["error"]
+
+
+def test_launch_snapshots_port_overlay_and_passes_only_snapshot_to_job(tmp_path, monkeypatch):
+    from quant_agent import executor
+    from quant_agent.port_overlay import PortOverlaySession
+    from quant_agent.reproducibility import ReproducibilityManifest
+
+    jobs = tmp_path / "jobs"
+    venvs = tmp_path / ".venvs"
+    python = venvs / "awq" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.write_text("")
+    overlay_session = PortOverlaySession(
+        root=tmp_path / "out" / "overlays" / "awq" / "org_model",
+        method_id="awq", model_id="org/model", base_commit="a" * 40,
+    )
+    result = overlay_session.write(
+        patch=(
+            "diff --git a/awq/model.py b/awq/model.py\n"
+            "--- a/awq/model.py\n+++ b/awq/model.py\n"
+            "@@ -1 +1,2 @@\n X = 1\n+Y = 2\n"
+        ),
+        rationale="Add target architecture dispatch.",
+    )
+    overlay = Path(result["overlay_dir"])
+    script = (
+        f"# QUANT_AGENT_OVERLAY_DIR={overlay}\n"
+        "import os\nOVERLAY = os.environ['QUANT_AGENT_OVERLAY_DIR']\n"
+        "REPO = os.environ['QUANT_AGENT_METHOD_REPO']\n"
+    )
+    monkeypatch.setattr(executor, "JOBS_ROOT", jobs)
+    monkeypatch.setattr(executor, "VENV_ROOT", venvs)
+    monkeypatch.setattr(executor, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(executor, "_new_job_id", lambda: "20260101T000000Z-aabbcc")
+    def fake_prepare(method_id, manifest, snapshot, job_dir):
+        worktree = job_dir / "method-repo"
+        worktree.mkdir()
+        return worktree
+    monkeypatch.setattr(executor, "_prepare_overlay_worktree", fake_prepare)
+    monkeypatch.setattr(
+        executor,
+        "build_manifest",
+        lambda **kwargs: ReproducibilityManifest(
+            schema_version="1.0", created_at=kwargs["created_at"],
+            model_id=kwargs["model_id"], method_id=kwargs["method_id"],
+            script_sha256="a" * 64, output_dir=kwargs["output_dir"],
+            execution_mode=kwargs["execution_mode"], python={}, platform={},
+            runtime_versions={}, gpu_cuda={}, method_repo_commit=None,
+            overlay_sha256=kwargs["overlay_sha256"],
+            overlay_snapshot_path=kwargs["overlay_snapshot_path"],
+        ),
+    )
+    captured = {}
+
+    class Proc:
+        pid = 43212
+
+    def fake_popen(*args, **kwargs):
+        captured["env"] = kwargs["env"]
+        return Proc()
+
+    monkeypatch.setattr(executor.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(executor.os, "getpgid", lambda pid: pid)
+    meta = executor.launch("awq", "org/model", script, "/tmp/out")
+    snapshot = jobs / meta.job_id / "overlay"
+    assert meta.overlay_path == str(snapshot)
+    assert meta.overlay_sha256
+    assert (snapshot / "overlay.patch").read_text() == (overlay / "overlay.patch").read_text()
+    assert captured["env"]["QUANT_AGENT_OVERLAY_DIR"] == str(snapshot)
+    assert captured["env"]["QUANT_AGENT_METHOD_REPO"] == str(jobs / meta.job_id / "method-repo")
+    manifest = json.loads((jobs / meta.job_id / "reproducibility.json").read_text())
+    assert manifest["overlay_sha256"] == meta.overlay_sha256
+
+
+def test_prepare_overlay_worktree_applies_patch_without_changing_canonical_checkout(tmp_path, monkeypatch):
+    from quant_agent import executor
+    from quant_agent.port_overlay import PortOverlaySession, validate_overlay_bundle
+
+    repo = tmp_path / ".venvs" / "awq" / "repo"
+    repo.mkdir(parents=True)
+    _git("init", cwd=repo)
+    source = repo / "model.py"
+    source.write_text("SUPPORTED = ['llama']\n")
+    _git("add", "model.py", cwd=repo)
+    _git(
+        "-c", "user.name=Test", "-c", "user.email=test@example.com",
+        "commit", "-m", "initial", cwd=repo,
+    )
+    commit = _git("rev-parse", "HEAD", cwd=repo)
+    session = PortOverlaySession(
+        root=tmp_path / "out" / "overlays" / "awq" / "org_model",
+        method_id="awq", model_id="org/model", base_commit=commit,
+    )
+    result = session.write(
+        patch=(
+            "diff --git a/model.py b/model.py\n"
+            "--- a/model.py\n+++ b/model.py\n"
+            "@@ -1 +1,2 @@\n SUPPORTED = ['llama']\n+SUPPORTED.append('qwen2')\n"
+        ),
+        rationale="Add Qwen2 dispatch.",
+    )
+    overlay = Path(result["overlay_dir"])
+    snapshot = tmp_path / "jobs" / "job" / "overlay"
+    snapshot.parent.mkdir(parents=True)
+    import shutil
+    shutil.copytree(overlay, snapshot)
+    monkeypatch.setattr(executor, "VENV_ROOT", tmp_path / ".venvs")
+    worktree = executor._prepare_overlay_worktree(
+        "awq", validate_overlay_bundle(snapshot), snapshot, snapshot.parent,
+    )
+    assert source.read_text() == "SUPPORTED = ['llama']\n"
+    assert "qwen2" in (worktree / "model.py").read_text()
+    executor._cleanup_overlay_worktree("awq", worktree)
+    assert not worktree.exists()

@@ -41,14 +41,14 @@ def _metrics() -> Metrics:
 
 
 def _patch_llm(monkeypatch, decision: TuneDecision):
-    """Replace ChatAnthropic + with_structured_output to return a canned decision."""
+    """Replace the stage model + structured output with a canned decision."""
     fake_structured = MagicMock()
     fake_structured.invoke = MagicMock(return_value=decision)
 
     fake_llm = MagicMock()
     fake_llm.with_structured_output = MagicMock(return_value=fake_structured)
 
-    monkeypatch.setattr(tune_agent, "ChatAnthropic", lambda **kw: fake_llm)
+    monkeypatch.setattr(tune_agent, "create_chat_model", lambda *a, **kw: fake_llm)
     return fake_structured
 
 
@@ -172,7 +172,7 @@ def test_constraint_rejects_duplicate_proposal(monkeypatch):
 def test_propose_with_no_ranges_immediately_stops(monkeypatch):
     """When the method has nothing to tune, skip the LLM and stop."""
     fake_llm = MagicMock()
-    monkeypatch.setattr(tune_agent, "ChatAnthropic", lambda **kw: fake_llm)
+    monkeypatch.setattr(tune_agent, "create_chat_model", lambda *a, **kw: fake_llm)
 
     result = tune_agent.propose(
         method=_method(),

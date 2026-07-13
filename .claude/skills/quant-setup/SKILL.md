@@ -1,133 +1,74 @@
 ---
 name: quant-setup
-description: Guide secure credential setup through the interactive `quant-agent setup` CLI. Use when the user asks to configure tokens or reports authentication errors. Never accepts or writes secrets from chat.
+description: Guide secure authentication and credential setup for subscription-backed Codex skills, the optional OpenAI API-backed Python pipeline, HuggingFace gated models, and GitHub rate limits. Use when a user needs to sign Codex in, configure tokens, choose subscription versus API authentication, or resolve 401/403/authentication failures. Never accept, reveal, or manipulate secret values through chat.
 ---
 
-# Quant-setup — secure credential setup for the quantization pipeline
+# Quant Setup
 
-This skill writes `/home/ubuntu/model-quantization-agent/.env` (mode 600, gitignored). It is the single source of truth that the other three skills (`quant`, `quant-execute`, `quant-tune`) read via `_shared/load_env.sh`.
+Separate the reasoning credential from model/repository access:
 
-## When to invoke
+- **Codex subscription mode:** sign the Codex app/CLI into ChatGPT. The quant skills
+  then use the active subscription and do not require `OPENAI_API_KEY`.
+- **Python API mode:** `quant-agent ask` uses the OpenAI API backend and requires
+  `OPENAI_API_KEY`.
+- **Model access:** gated HuggingFace models require `HF_TOKEN` or
+  `HUGGINGFACE_HUB_TOKEN` in the parent process.
+- **Repository access:** `GITHUB_TOKEN` is optional and only raises API rate limits.
 
-- User asks to "set up env / credentials", "configure HF token", "add my anthropic key", "store huggingface token".
-- A sibling skill bailed because `.env` was missing or `HF_TOKEN` was not set.
-- A run failed with HF `401`/`403` (gated repo) or `OPENAI_API_KEY` errors.
+Never extract ChatGPT cookies or OAuth tokens, copy credentials from browser storage,
+or substitute ChatGPT auth into `ChatOpenAI`.
 
-## Decision: which path?
+## Subscription-backed Codex
 
-There are two ways to set credentials. **Always offer the CLI path first.**
+Use the official Codex browser/device-code login on the trusted machine. Verify the
+active account through Codex's status/account UI, not by reading local auth files.
+On an EC2 worker, prefer device-code login. Subscription limits still apply; this
+avoids Platform API billing rather than providing unlimited inference.
 
-### Path A — `quant-agent setup` CLI (recommended)
+## API-backed Python pipeline
 
-The Python CLI (`src/quant_agent/setup_cmd.py`) prompts for each key with `getpass`, so:
+When the user deliberately chooses API mode, direct them to run this themselves in
+an interactive terminal:
 
-- The value never appears on screen.
-- The value never lands in shell history.
-- The value never lands in this Claude Code conversation.
-- The file is written with mode `0600` automatically.
-
-Tell the user, verbatim:
-
-```
-For the most secure setup, run this in your terminal (not in chat):
-
-    quant-agent setup
-
-It uses hidden input (getpass) so your tokens are never displayed or logged.
-Re-run with `--force` to replace an existing .env, or `--no-optional` to skip
-GITHUB_TOKEN and HUGGINGFACE_HUB_TOKEN prompts.
+```text
+quant-agent setup
 ```
 
-Then wait for the user to confirm completion. Do not accept credentials in chat and
-do not read or edit the credential file through agent tools. If the user cannot use
-the interactive CLI, explain that setup must wait until a secure terminal is available.
+The command uses hidden input, validates OpenAI model access unless disabled, prompts
+for optional HF/GitHub tokens, refuses symlink replacement, and atomically writes a
+mode-600 credential file. Never run it on the user's behalf, accept secrets in chat,
+or inspect the resulting file.
 
-## Validation per key type
+## No credential file
 
-After writing, run a tiny live check so a typo surfaces now, not at first use.
+For a session-only HF token, tell the user to enter it invisibly before starting
+Codex or the Python process:
 
-### `HUGGINGFACE_HUB_TOKEN` / `HF_TOKEN`
-
-```
-source /home/ubuntu/model-quantization-agent/.claude/skills/_shared/load_env.sh
-curl -sS -H "Authorization: Bearer $HF_TOKEN" https://huggingface.co/api/whoami-v2 | head -c 400
-```
-
-- `200` with a JSON body containing `name` / `email` → **valid**.
-- `401`/`403` → token is bad or missing scope. Ask the user to regenerate at https://huggingface.co/settings/tokens with read scope.
-
-### `OPENAI_API_KEY`
-
-The Python CLI's `_validate_openai` checks authentication and default-model access. Mirror it:
-
-```
-source /home/ubuntu/model-quantization-agent/.claude/skills/_shared/load_env.sh
-python3 -c "
-from openai import OpenAI
-import os
-OpenAI(api_key=os.environ['OPENAI_API_KEY']).models.retrieve(
-    os.environ.get('QUANT_AGENT_MODEL', 'gpt-5.6-terra')
-)
-print('ok')
-"
+```bash
+read -rsp "HuggingFace token: " HF_TOKEN
+export HF_TOKEN
+export HUGGINGFACE_HUB_TOKEN="$HF_TOKEN"
+echo
 ```
 
-- Stdout `ok` → valid.
-- Any exception → tell the user the model name and exception class; suggest re-running `quant-agent setup` with `--no-validate` skipped.
+Do not echo the value. Environment-only setup must be repeated in a new shell/session.
 
-### `GITHUB_TOKEN` (optional)
+## Diagnose by credential name only
 
-```
-source .../_shared/load_env.sh
-curl -sS -H "Authorization: Bearer $GITHUB_TOKEN" https://api.github.com/user | head -c 200
-```
+- HF `401/403`: confirm license acceptance and a read-scoped HF token; do not relaunch
+  until access changes.
+- OpenAI authentication/model-access error: applies only to Python API mode; rerun the
+  interactive setup or use subscription-backed skills instead.
+- GitHub `401`: remove or replace the optional token; public catalog clones still use
+  catalog-pinned HTTPS URLs.
+- Codex subscription limit: wait for reset, use eligible ChatGPT credits, select a
+  lighter Codex model, or explicitly switch to another backend.
 
-`200` with `login` field → valid. `401` → bad token.
+## Security invariants
 
-## Permissions audit
-
-Whenever this skill runs, verify:
-
-```
-stat -c %a /home/ubuntu/model-quantization-agent/.env
-```
-
-Must print `600`. If not:
-
-```
-chmod 600 /home/ubuntu/model-quantization-agent/.env
-```
-
-## What this skill never does
-
-- **Never echo a secret value back in chat.** Confirm by key name only.
-- **Never `cat` or `Read` the .env and quote its contents back to the user.** Only emit key NAMES.
-- **Never check the .env into git.** It is in `.gitignore`; if you accidentally `git add` it, run `git rm --cached .env` and re-confirm.
-- **Never write tokens to stdout, log files, or skill output.**
-- **Never paste a token into a Bash command line where it would land in shell history.** Always go through the .env file or the CLI's getpass prompt.
-
-## Reference: keys this pipeline reads
-
-| Key | Required? | Used by | Notes |
-|-----|-----------|---------|-------|
-| `OPENAI_API_KEY` | yes (Python CLI) | quant-agent CLI | Skills call Claude through the Claude Code session, so skill-only flows do not strictly need this. The Python CLI does. |
-| `HUGGINGFACE_HUB_TOKEN` | for gated models | all skills + CLI | Loader aliases this to `HF_TOKEN` automatically. |
-| `GITHUB_TOKEN` | optional | all | Lifts GitHub API rate limits during README/example fetching. |
-| `QUANT_AGENT_MODEL` | optional | Python CLI | Global model override. Stage defaults use `gpt-5.6-terra`, with `gpt-5.6-sol` for port/fix. |
-
-## Cross-skill contract
-
-Sibling skills (`quant`, `quant-execute`, `quant-tune`) load credentials by sourcing the shared helper at the top of every Bash subprocess that touches HF or runs a generated script:
-
-```
-source /home/ubuntu/model-quantization-agent/.claude/skills/_shared/load_env.sh
-```
-
-The helper:
-
-- Refuses to source a `.env` whose mode is not `600` (auto-tightens).
-- Exports every `KEY=value` line.
-- Aliases `HUGGINGFACE_HUB_TOKEN` ↔ `HF_TOKEN` so libraries reading either name see the same value.
-- Echoes only the loaded key NAMES to stderr, never values.
-
-If a skill encounters a missing key at runtime, it should bail and direct the user back here — not silently retry.
+- Never read, print, edit, stage, or commit credential files with agent tools.
+- Never place a token in a command argument, generated script, job metadata, logs,
+  Adapt trace, overlay, or reproducibility manifest.
+- Installers, repository code, dry-import probes, and measurements receive no cloud
+  credentials. Quantization receives only HF authentication when needed.
+- Confirm setup only by credential names and successful authenticated behavior.

@@ -1,0 +1,208 @@
+schema_version: 1
+
+# Empty lists mean "not established", never "supports everything". The compatibility
+# engine treats supported lists as positive evidence unless an explicit allowlist
+# policy is present. This conservative baseline is intended to be enriched only from
+# primary papers, official repositories, and verified project runs.
+defaults: &unknown
+  supported_families: []
+  unsupported_families: []
+  family_policy: evidence
+  min_compute_capability: null
+  supported_gpu_arches: []
+  gpu_arch_policy: evidence
+  kernel_constraints: []
+  artifact_format: null
+  measurement_adapter: null
+  support_tier: catalog_only
+  facts: []
+
+methods:
+  gptq:
+    <<: *unknown
+    artifact_format: transformers
+    measurement_adapter: generic_hf
+    support_tier: experimental
+    paper_url: https://arxiv.org/abs/2210.17323
+    repository_url: https://github.com/IST-DASLab/gptq
+  awq:
+    <<: *unknown
+    artifact_format: transformers
+    measurement_adapter: generic_hf
+    support_tier: experimental
+    paper_url: https://arxiv.org/abs/2306.00978
+    repository_url: https://github.com/mit-han-lab/llm-awq
+  smoothquant:
+    <<: *unknown
+    artifact_format: transformers_fake_quant
+    measurement_adapter: generic_hf
+    support_tier: verified
+    paper_url: https://arxiv.org/abs/2211.10438
+    repository_url: https://github.com/mit-han-lab/smoothquant
+    facts:
+      - field: project_validation
+        value: qwen2_a10g_fake_quant
+        confidence: documented
+        source: reports/Qwen2.5-0.5B_smoothquant_g5xlarge.md
+        note: Project run; fake-quant output, not a packed deployment artifact.
+  quip_sharp:
+    <<: *unknown
+    paper_url: https://arxiv.org/abs/2402.04396
+    repository_url: https://github.com/Cornell-RelaxML/quip-sharp
+  spinquant:
+    <<: *unknown
+    paper_url: https://arxiv.org/abs/2405.16406
+    repository_url: https://github.com/facebookresearch/SpinQuant
+  bnb_llm_int8:
+    <<: *unknown
+    artifact_format: transformers
+    measurement_adapter: generic_hf
+    support_tier: verified
+    paper_url: https://arxiv.org/abs/2208.07339
+    repository_url: https://github.com/bitsandbytes-foundation/bitsandbytes
+    facts:
+      - field: project_validation
+        value: qwen2_a10g
+        confidence: documented
+        source: reports/Qwen2.5-0.5B_bnb_llm_int8_g5xlarge.md
+        note: Project end-to-end run on an A10G; report predates benchmark v2.
+  bnb_nf4:
+    <<: *unknown
+    artifact_format: transformers
+    measurement_adapter: generic_hf
+    support_tier: experimental
+    paper_url: https://arxiv.org/abs/2305.14314
+    repository_url: https://github.com/bitsandbytes-foundation/bitsandbytes
+  fp8:
+    <<: *unknown
+    min_compute_capability: 8.9
+    supported_gpu_arches: [Ada, Hopper]
+    gpu_arch_policy: allowlist
+    kernel_constraints:
+      - Native Transformer Engine FP8 execution requires FP8-capable NVIDIA hardware.
+    artifact_format: transformers
+    measurement_adapter: generic_hf
+    support_tier: experimental
+    paper_url: https://arxiv.org/abs/2209.05433
+    repository_url: https://github.com/NVIDIA/TransformerEngine
+    facts:
+      - field: min_compute_capability
+        value: 8.9
+        confidence: inferred
+        source: https://github.com/NVIDIA/TransformerEngine
+        note: Conservative boundary for native FP8-capable Ada/Hopper hardware.
+  omniquant:
+    <<: *unknown
+    paper_url: https://arxiv.org/abs/2308.13137
+    repository_url: https://github.com/OpenGVLab/OmniQuant
+  squeezellm:
+    <<: *unknown
+    paper_url: https://arxiv.org/abs/2306.07629
+    repository_url: https://github.com/SqueezeAILab/SqueezeLLM
+  kivi:
+    <<: *unknown
+    artifact_format: runtime_kv_cache
+    paper_url: https://arxiv.org/abs/2402.02750
+    repository_url: https://github.com/jy-yuan/KIVI
+  llm_qat:
+    <<: *unknown
+    paper_url: https://arxiv.org/abs/2305.17888
+    repository_url: https://github.com/facebookresearch/LLM-QAT
+  quarot:
+    <<: *unknown
+    paper_url: https://arxiv.org/abs/2404.00456
+    repository_url: https://github.com/spcl/QuaRot
+  guidedquant:
+    <<: *unknown
+    paper_url: https://arxiv.org/abs/2505.07004
+    repository_url: https://github.com/snu-mllab/GuidedQuant
+  leanquant:
+    <<: *unknown
+    paper_url: https://arxiv.org/abs/2407.10032
+    repository_url: https://github.com/LeanModels/LeanQuant
+  flatquant:
+    <<: *unknown
+    paper_url: https://arxiv.org/abs/2410.09426
+    repository_url: https://github.com/ruikangliu/FlatQuant
+  atom:
+    <<: *unknown
+    paper_url: https://arxiv.org/abs/2310.19102
+    repository_url: https://github.com/efeslab/Atom
+  aqlm:
+    <<: *unknown
+    paper_url: https://arxiv.org/abs/2401.06118
+    repository_url: https://github.com/Vahe1994/AQLM
+  vptq:
+    <<: *unknown
+    paper_url: https://arxiv.org/abs/2409.17066
+    repository_url: https://github.com/microsoft/VPTQ
+  autoround:
+    <<: *unknown
+    artifact_format: transformers
+    measurement_adapter: generic_hf
+    support_tier: experimental
+    paper_url: https://arxiv.org/abs/2309.05516
+    repository_url: https://github.com/intel/auto-round
+  duquant:
+    <<: *unknown
+    paper_url: https://arxiv.org/abs/2406.01721
+    repository_url: https://github.com/Hsu1023/DuQuant
+  kvquant:
+    <<: *unknown
+    artifact_format: runtime_kv_cache
+    paper_url: https://arxiv.org/abs/2401.18079
+    repository_url: https://github.com/SqueezeAILab/KVQuant
+  zipcache:
+    <<: *unknown
+    artifact_format: runtime_kv_cache
+    paper_url: https://arxiv.org/abs/2405.14256
+    repository_url: https://github.com/ThisisBillhe/ZipCache
+  efficientqat:
+    <<: *unknown
+    paper_url: https://arxiv.org/abs/2407.11062
+    repository_url: https://github.com/OpenGVLab/EfficientQAT
+  owq:
+    <<: *unknown
+    paper_url: https://arxiv.org/abs/2306.02272
+    repository_url: https://github.com/xvyaward/owq
+  bitnet:
+    <<: *unknown
+    paper_url: https://arxiv.org/abs/2402.17764
+    repository_url: https://github.com/microsoft/BitNet
+  spqr:
+    <<: *unknown
+    paper_url: https://arxiv.org/abs/2306.03078
+    repository_url: https://github.com/Vahe1994/SpQR
+  slim_llm:
+    <<: *unknown
+    paper_url: https://arxiv.org/abs/2405.14917
+    repository_url: https://github.com/Aaronhuang-778/SliM-LLM
+  paretoq:
+    <<: *unknown
+    paper_url: https://arxiv.org/abs/2502.02631
+    repository_url: https://github.com/facebookresearch/ParetoQ
+  zeroquant:
+    <<: *unknown
+    paper_url: https://arxiv.org/abs/2206.01861
+    repository_url: https://github.com/microsoft/DeepSpeed
+  zeroquant_v2:
+    <<: *unknown
+    paper_url: https://arxiv.org/abs/2303.08302
+    repository_url: https://github.com/microsoft/DeepSpeed
+  llm_fp4:
+    <<: *unknown
+    paper_url: https://arxiv.org/abs/2310.16836
+    repository_url: https://github.com/nbasyl/LLM-FP4
+  outlier_suppression_plus:
+    <<: *unknown
+    paper_url: https://arxiv.org/abs/2304.09145
+    repository_url: https://github.com/ModelTC/Outlier_Suppression_Plus
+  mxfp8:
+    <<: *unknown
+    paper_url: https://arxiv.org/abs/2310.10537
+    repository_url: https://github.com/microsoft/microxcaling
+  gguf:
+    <<: *unknown
+    artifact_format: gguf
+    support_tier: experimental
+    repository_url: https://github.com/ggml-org/llama.cpp

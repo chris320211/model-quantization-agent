@@ -1,240 +1,143 @@
 ---
 name: quant
-description: Recommend and generate a HuggingFace model quantization script for a given AWS GPU instance. Use when the user asks to port, quantize, or run a HuggingFace model on a specific EC2 GPU type (phrasings like "port llama2 7b to g5.xlarge", "quantize Mistral 7B for an A100", "what quant method should I use for Qwen 2.5 14B on g6.xlarge"). Produces a ranked candidate list, takes the user's pick, then writes a syntax-validated Python quantization script to ./out/.
+description: Research quantization methods and produce a validated HuggingFace quantization artifact for a target model and AWS/NVIDIA GPU. Use for requests to port or quantize a model, compare methods, select a method, generate a script, or create a separate model-family overlay. Runs the current deterministic compatibility and staged Adapt contracts without directly calling the Python OpenAI backend; stops before launching the GPU job.
 ---
 
-# Quant — model quantization research + script generator
+# Quant
 
-This skill replicates the `model-quantization-agent` Python package's Research and Adapt phases without calling the configured OpenAI API directly. You (Codex) do the work the LangChain agents would have done, using the bundled catalog files in `reference/` plus your built-in `Read`, `Write`, `Edit`, `Bash`, and `WebFetch` tools.
+Use the active Codex session for reasoning and the Python package for deterministic
+contracts. Read [reference/pipeline_contract.md](reference/pipeline_contract.md)
+before acting. This skill ends with a validated script and optional overlay; hand
+execution to `quant-execute` and optimization to `quant-tune`.
 
-The skill stops after writing a validated script. It does not build venvs, does not run the script, does not supervise jobs, and does not have a Fix loop. Hand off to the sibling `quant-execute` skill to bootstrap + run, and then optionally to `quant-tune` to close the loop with hyperparameter iteration.
+Do not call `quant-agent ask` when the user requested subscription-backed operation:
+that command uses the Python OpenAI API backend. Do not read or edit credential files.
 
-## When to invoke
+## Resolve the request
 
-Trigger on any of:
+Collect the exact model and target hardware plus any requested bit width, backend,
+quality/speed priority, calibration availability, QAT permission, activation
+quantization, KV-cache quantization, and `trust_remote_code` consent.
 
-- "port `<model>` to `<aws-instance>`"
-- "quantize `<model>` for/on `<aws-instance>`"
-- "what quant(ization) method should I use for `<model>` on `<aws-instance>`"
-- "recommend a quantization for `<model>` (running on/targeting) `<aws-instance>`"
+- Resolve exact `org/model` ids directly. Otherwise use
+  `reference/model_aliases.yaml`; fuzzy HF search results require user confirmation.
+- Resolve AWS facts from `aws_instances.yaml` plus `gpu_specs.yaml`. On the target
+  machine, merge live `nvidia-smi` free/total VRAM and driver data.
+- Fetch HF `config.json` and model metadata to obtain architectures and parameter
+  count. Report whether the count is exact, file-size-derived, or approximate.
+- Ask for a missing model id or hardware target when it materially changes fitting.
 
-If the user gives a model but no instance (or vice versa), ask once for the missing piece before proceeding. Do not guess defaults.
+## Research every method
 
-## Inputs and parsing
+Read `reference/methods.yaml` and `reference/method_capabilities.yaml`. Run the
+canonical evaluator, passing only known flags:
 
-Two regexes (lifted from `src/quant_agent/research_agent.py`):
-
-- **Instance:** `\b([a-z]\d+[a-z\d\-]*\.(?:\d*x?large|metal))\b` (e.g. `g5.xlarge`, `p4d.24xlarge`, `g6e.12xlarge`, `p5.48xlarge`).
-- **Model phrase:** the rest of the user input after stripping the instance match and the words `port`, `quantize`, `to`, `on`, `for`, `using`. Collapse whitespace.
-
-## Phase 1 — Resolve inputs
-
-Run these in parallel.
-
-1. **Model alias lookup.** Read `reference/model_aliases.yaml`. Normalize the model phrase by lowercasing and replacing every run of characters not in `[a-z0-9.]` with a single space, then collapsing whitespace. Look up the normalized phrase as a key. If hit, you have `model_id` (e.g. `meta-llama/Llama-2-7b-hf`). If miss, ask the user for an exact HuggingFace id — do not invent one.
-
-2. **Instance lookup.** Read `reference/aws_instances.yaml` and `reference/gpu_specs.yaml`. From the instance type, extract `{vram_gb, gpu_count, gpu}`. Then cross-reference `gpu` in `gpu_specs.yaml` to add `{compute_capability, gpu_arch}`. If the instance isn't in the YAML, tell the user it's unsupported and stop.
-
-3. **HuggingFace model info.** WebFetch `https://huggingface.co/api/models/<model_id>`. Parse the JSON response and pull out:
-   - `architectures` (e.g. `["LlamaForCausalLM"]`) — needed for compatibility reasoning in Research.
-   - `safetensors.total` if present — the exact param count. If absent, sum `safetensors.parameters` across the entries, or fall back to asking the user for `params_b` (model parameters in billions).
-   - `params_b = total_params / 1e9`. If you can't get a number, hold `params_b = None` and skip VRAM math; tell the user the recommendation will be coarser.
-
-4. **Echo resolved inputs.** Before running Research, print one line summarizing what you resolved:
-
-   ```
-   resolved: model=<id> params_b=<n> instance=<type> vram=<g>GB gpu=<name> compute_cap=<c> arch=<a>
-   ```
-
-## Phase 2 — Research
-
-Read `reference/methods.yaml` (the catalog, 35 methods).
-
-Your job is to survey **every** catalog method and produce a ranked candidate list. **You do not pick a winner — the user picks.**
-
-### Per-method walk
-
-For **every** id in `methods.yaml`, emit one verdict line under a `## Considered` section:
-
-- `verdict: include` if the method plausibly supports this model's architecture **and** runs on this GPU (compute capability, kernel availability, supported bit widths) **and** fits VRAM at a supported bit width.
-- `verdict: reject` otherwise.
-- `reason:` one line citing the specific axis: architecture compatibility (`hf_info.architectures` vs the method's typical targets), GPU/compute-capability fit (e.g. FP8 needs Hopper sm_90, Marlin kernels need Ampere sm_80+), VRAM math (`params_b * bits / 8 * 1.4 <= vram_gb`), or calibration/QAT fit.
-
-**Bit-width hardware rule.** NVIDIA GPUs only have native datatype support for INT8, INT4, FP8 (Hopper/Ada only), and FP16/BF16. There is no hardware path for 1-, 2-, or 3-bit; those rely on packed-weight software dequant kernels that are typically tuned for sm_80 (A100) and have poor or no validated path on consumer Ampere (sm_86 — A10G) and below.
-
-- On `compute_capability < 9.0` (anything pre-Hopper): **reject any candidate whose chosen bit width is < 4.** This means 2-bit and 3-bit picks are off the table on A10G, A100, L4, L40S, V100, T4, M60, K80.
-- A method that lists both sub-4-bit and 4-bit options (e.g. AQLM `[2,3,4]`, VPTQ `[1,2,3,4]`, SpQR `[3,4]`) can still **include** — but pin its `bits` to the smallest **>= 4** option from the catalog.
-- A method whose only options are sub-4-bit (e.g. BitNet `[2]`) **rejects** on these GPUs.
-- On Hopper (sm_90) or newer: the rule relaxes — sub-4-bit is allowed if the method has documented Hopper kernels.
-
-**KV-cache-only methods.** Methods whose only entry in `quantizes` is `kv_cache` (e.g. `kivi`, `kvquant`, `zipcache`) do **not** reduce weight memory — they shrink the KV cache during long-context generation. For a "port `<model>` to `<instance>`" request, the user is asking to fit the **weights** on the GPU, so KV-cache-only methods are out of scope. **Reject** them with `reason: kv-cache-only; doesn't reduce weight memory`. Exception: if the user phrases the request around long context ("run 1M context Llama-3 on..."), include them — but no current alias phrasing implies that, so default to reject.
-
-You **must** produce exactly one `considered` entry per catalog id. No duplicates, no omissions. Render it as a collapsible section so the table below stays the focus:
-
-```markdown
-<details>
-<summary>Considered (all <N> methods)</summary>
-
-- `gptq` — **include** — weight-only PTQ, supports Llama, fits 5.1 GB at 4-bit on 24GB A10G.
-- `awq` — **include** — activation-aware weight-only, kernel-mature on Ampere sm_80+.
-- `fp8` — **reject** — FP8 requires Hopper sm_90; A10G is sm_86.
-- ... (one line per id)
-
-</details>
+```bash
+python .agents/skills/quant/scripts/evaluate_compatibility.py \
+  --params-b <params_b> --vram-gb <vram_gb> \
+  --compute-capability <cc> --gpu-arch <arch> \
+  --architecture <ArchitectureClass> [request flags]
 ```
 
-### Finalists
+Use `--calibration unavailable`, `--allow-qat`, `--need-activation-quant`,
+`--need-kv-cache-quant`, `--target-bits`, and `--backend` only when requested or
+known. Never reproduce old blanket sub-4-bit rules; capability data and the
+deterministic evaluator are authoritative.
 
-From the `include` verdicts, pick **3-8** and emit them as a markdown table titled `## Candidates`:
+Produce exactly one considered row for every catalog id:
 
-| # | id | name | bits | est_vram_gb | quality | speed | needs_calib | summary |
-|---|----|------|------|-------------|---------|-------|-------------|---------|
-| 1 | awq | Activation-aware Weight Quantization | 4 | 5.6 | 5 | 4 | yes | 2-3 sentence why/when |
+- `blocked`: reject with the deterministic reason; never promote it.
+- `eligible`: hard constraints passed; investigate only for ranking evidence.
+- `port_required`: may be included; state that Adapt must create a reviewable
+  overlay because native family support is not established.
+- `unknown`: investigate repository/paper evidence conservatively.
 
-Hard rules (mirror the Pydantic validator in `src/quant_agent/schemas.py`):
+Return 3–8 distinct finalists copied from the catalog. Use the evaluator's chosen
+bits, `params_b * bits / 8 * 1.4` VRAM estimate, catalog scores/repository, and
+catalog hyperparameter defaults. Explain tradeoffs without selecting a winner.
+Ask the user to select a finalist unless they already named one explicitly.
 
-- `id` MUST be a catalog id from `methods.yaml`.
-- `name` and `quality`/`speed` columns MUST be copied verbatim from the catalog (`quality` and `speedup` fields).
-- `bits` MUST be one of the catalog's `bits` for that id, picked so that `params_b * bits / 8 * 1.4 <= vram_gb`.
-- `est_vram_gb = round(params_b * bits / 8 * 1.4, 2)`.
-- `needs_calib` mirrors the catalog's `needs_calibration` field.
-- `summary` is 2-3 sentences on when this method is the right fit and what it costs.
+## Run staged Adapt on the selected method
 
-### Tradeoffs
+Keep the selected method locked throughout Adapt. Record each stage in
+`out/quantize_<safe_model>_<method>.adapt.json`; persist a failed-stage record when
+anything fails.
 
-After the table, write one paragraph titled `## Tradeoffs` comparing the finalists across the axes that matter for **this** model and GPU: quality vs speed, calibration cost, bit-width options, activation vs weight-only, kernel maturity. **No ranking** — the user ranks.
+1. **Prepare** — choose the stable script path, temporary attempt path, and exact
+   output directory from `quant_agent.executor.default_output_dir`.
+2. **Acquire** — clone only the catalog repository into
+   `.venvs/<method>/repo` and record HEAD:
 
-## Phase 3 — User selection
-
-Ask the user:
-
-> Pick a candidate by number (1-N), or `q` to quit:
-
-If the user replies with a number in range, use that candidate as `chosen`. If `q` or anything else, stop cleanly and explain how to retry.
-
-## Phase 4 — Adapt
-
-You are now writing a Python script that quantizes `<model_id>` using `<chosen.name>` (`<chosen.id>`, `<chosen.bits>`-bit). Output path: `out/quantize_<safe_model>_<chosen.id>.py` where `safe_model = re.sub(r'[^a-zA-Z0-9._-]+', '_', model_id).strip('_')`. Create `out/` if it doesn't exist (`mkdir -p out`).
-
-### Workflow — follow in order
-
-1. **Read the README.** WebFetch `https://raw.githubusercontent.com/<owner>/<repo>/HEAD/README.md` (where `<owner>/<repo>` comes from `chosen.repo_url`). If 404, retry on `master/README.md`, then `main/README.md`. Note install steps and example usage.
-
-2. **Clone the repo locally.** `Bash: git clone --depth 1 <chosen.repo_url> /tmp/quant-<chosen.id>/repo` (idempotent: skip if `/tmp/quant-<chosen.id>/repo/.git` exists). This is for source inspection only — you are not building a venv.
-
-3. **Identify install steps from the README.** Examples (matching the Python agent's defaults):
-   - Research repos: `["pip install -r requirements.txt", "pip install -e ."]` or `["pip install -e ."]`
-   - Pip-packaged libs: `["pip install autoawq"]` (awq), `["pip install gptqmodel datasets"]` (gptq), `["pip install hqq"]` (hqq), `["pip install bitsandbytes"]` (bnb_nf4 / bnb_llm_int8)
-
-   Always assume a baseline of `torch==2.3.1` (cu121) + `transformers` + `accelerate` + `safetensors` + `sentencepiece` is installed first. **Do NOT duplicate those in the install_steps you write into the script header.**
-
-4. **Find the example entry point.** `Bash: ls /tmp/quant-<chosen.id>/repo/examples`, then `ls .../scripts`, then `ls .../` if needed. `Read` 1-2 most-likely entry files to see their API. **Do not run `--help`** (no venv built); read the argparse/click block in the source instead to discover the real flag names.
-
-   **Pure pip-package case (no examples/scripts dir):** Some methods are published as clean Python packages with no example scripts in the repo (e.g. `auto-round`, `autoawq`, `bitsandbytes`). If `examples/`, `scripts/`, and the repo root all lack a runnable entry point, fall back to:
-   - `Read <pkg>/__init__.py` to confirm what the package exports (the public class names).
-   - `grep -rn "^class <ClassName>\b" <pkg>/` to find the class definition.
-   - `Read` the class `__init__` and the primary `quantize*` / `save*` method to confirm signatures.
-   - Then commit to **Style A** (no Style B fallback for this case — there's no script to wrap).
-
-5. **Decide the script style and write it** with the `Write` tool to `out/quantize_<safe_model>_<chosen.id>.py`:
-
-   **STYLE A — Standalone import** (preferred when the method has a stable Python API: autoawq, gptqmodel, hqq, bitsandbytes, auto-round, or any importable module in the cloned repo). One Python file that imports the library and runs quantization in-process. Must load `<model_id>` from HF and save output to `./quantized/<chosen.id>-<safe_model>/`.
-
-   **Watch the pip-name vs import-name mismatch.** PyPI distribution names sometimes use hyphens while the Python module uses underscores. The install step takes the PyPI name; the `import` statement takes the module name. Known pairs in this catalog:
-   - `pip install auto-round` → `from auto_round import AutoRound`
-   - `pip install autoawq` → `from awq import AutoAWQForCausalLM` (note: not `from autoawq`)
-   - `pip install gptqmodel` → `from gptqmodel import GPTQModel`
-   - `pip install hqq` → `from hqq.core.quantize import BaseQuantizeConfig`
-   - `pip install bitsandbytes` → `import bitsandbytes` (matches)
-
-   When in doubt, `Read <repo>/<pkg>/__init__.py` after cloning to confirm the import path before writing the script.
-
-   **STYLE B — Wrapper subprocess** (preferred for research repos whose usage is `python examples/foo.py --model ...`). Python file that:
-   - imports `sys, os, subprocess, pathlib`
-   - reads `HF_TOKEN` from env (`HUGGINGFACE_HUB_TOKEN` or `HF_TOKEN`) and passes it into the child env
-   - computes `REPO = pathlib.Path("/tmp/quant-<chosen.id>/repo").resolve()`
-   - builds `child = {"PATH": os.environ.get("PATH", "")}` and adds only the
-     two HF token aliases when present
-   - `subprocess.run([sys.executable, "<entry_path_relative_to_repo>", "<flag_name>", "<model_id>", "<output_flag>", str(OUT)], cwd=REPO, env=child, check=True)`
-   - `OUT = pathlib.Path("./quantized/<chosen.id>-<safe_model>").resolve()`
-   - **EXACT flag names MUST come from the example source you read.** Do not invent flag names.
-
-   Both styles must:
-   - Quantize the real model at `<model_id>`.
-   - Handle HF gated models: read `HF_TOKEN` from env and pass to every loader / tokenizer call (or `huggingface_hub.login()`), and into the child env for wrapper style.
-   - Print a final line with the quantized model's on-disk size so success is visible in stdout.
-
-6. **Prepend a TUNE-LOCKED block** above the install header IF the chosen candidate has a `hyperparameters` dict (set by Research from the catalog's `hyperparameters_default`). One line per `name=value`. The `quant-tune` skill reads this block to know which knobs are tunable and as a safety check that the fix loop didn't silently mutate them.
-
-   ```python
-   # TUNE-LOCKED HYPERPARAMETERS (do not modify in fix loop):
-   # group_size=128
-   # zero_point=True
+   ```bash
+   python .agents/skills/quant/scripts/method_env.py \
+     --allow-unsafe-host-execution clone \
+     --method-id <method> --repo-url <catalog-url>
    ```
 
-   When the candidate has no hyperparameters (the catalog row has no `hyperparameters_default` block), omit the TUNE-LOCKED section entirely.
+3. **Plan** — inspect README plus relevant source and emit one `AdaptPlan`:
+   repository-supported install steps, `standalone` or `wrapper`, optional relative
+   entrypoint, `native|port_required|unknown` support, evidence files, and support
+   evidence. Repository code decides import names and flags; never invent them.
+4. **Environment** — after explicit host-execution acknowledgement, build the
+   canonical method venv with the plan's restricted Python/pip steps:
 
-7. **Prepend a header comment block** to the script with the install steps the user must run first:
-
-   ```python
-   # Generated by the `quant` Codex skill.
-   # Method: <chosen.name> (<chosen.id>), <chosen.bits>-bit
-   # Model:  <model_id>
-   # Target: <instance_type> (<vram_gb>GB <gpu>, sm_<compute_capability>)
-   #
-   # Before running, install the method into a clean venv:
-   #   python3.10 -m venv .venv-<chosen.id>
-   #   source .venv-<chosen.id>/bin/activate
-   #   pip install --upgrade pip wheel
-   #   pip install --index-url https://download.pytorch.org/whl/cu121 torch==2.3.1
-   #   pip install transformers accelerate safetensors sentencepiece
-   #   <method-specific install steps from README, e.g.: pip install autoawq>
-   #
-   # Then: python <this-script>
+   ```bash
+   python .agents/skills/quant/scripts/method_env.py \
+     --allow-unsafe-host-execution install --method-id <method> \
+     --step '<repository-supported pip/python step>'
    ```
 
-## Phase 5 — Validate
+   Repeat `--step` as needed. The helper chooses the local torch/CUDA spec and
+   strips cloud credentials from installers.
+5. **Architecture** — fetch full config and use the method venv to instantiate the
+   model on the meta device, then collapse `named_modules()` into target patterns.
+   If custom code is required and not approved, remain config-only and say so.
+6. **Port** — if Research or repository evidence says porting is required, compare
+   upstream dispatch/target assumptions with the architecture evidence. Create the
+   smallest text-only unified diff without editing the canonical checkout:
 
-Run **stage 1** (`ast.parse`) only — this skill never builds a venv, so the dry-import stage is intentionally skipped (the Python agent skips it too when the venv is absent; see `src/quant_agent/tools/script_io.py`).
+   ```bash
+   python .agents/skills/quant/scripts/write_overlay.py \
+     --method-id <method> --model-id <model> --base-commit <40-char-head> \
+     --patch-file <temporary-diff> --rationale '<why>' \
+     --evidence-file <repo-file> --target-module <module-pattern>
+   ```
 
-```
-Bash: python3 -c "import ast,sys; ast.parse(open('out/quantize_<safe_model>_<chosen.id>.py').read())"
-```
+7. **Generate** — author one script from the immutable plan, exact model/output,
+   architecture evidence, and locked hyperparameters. A wrapper must use the cloned
+   repository entrypoint and argv. A ported script must carry the exact overlay
+   header and read both executor-provided overlay environment variables.
+8. **Validate** — run the canonical staged validator, up to three authoring attempts:
 
-- If exit 0: validation passed, continue to handoff.
-- If exit non-zero: the stderr will contain `SyntaxError: <msg> at line <n>`. Use `Edit` to fix the script and re-run validation. **Retry up to 3 times.**
-- If still failing after 3 attempts: prepend `# WARNING: failed validation at stage=parse: <msg>` to the file and tell the user the script may need manual fixes.
+   ```bash
+   python .agents/skills/quant/scripts/validate_script.py <attempt-script> \
+     --method-id <method> --model-id <model> --output-dir <exact-output> \
+     --hyperparameters-json '<json>' [--overlay-dir <bundle>] \
+     --allow-unsafe-host-execution
+   ```
 
-## Phase 6 — Handoff
+9. **Promote** — atomically replace the stable script only after validation passes.
+   A failed attempt never becomes the handoff artifact.
 
-Print, in order:
+## Handoff
 
-1. The script path (`out/quantize_<safe_model>_<chosen.id>.py`).
-2. The chosen method (`<chosen.id>` / `<chosen.name>`, `<chosen.bits>`-bit).
-3. The exact install commands from the script header.
-4. The run command: `python out/quantize_<safe_model>_<chosen.id>.py`.
-5. **Credentials reminder.** If the model is gated (HuggingFace shows a license-acceptance gate, or `model_id` starts with `meta-llama/`, `mistralai/`, `google/gemma-`, etc.), tell the user:
-   - The script reads `HF_TOKEN`/`HUGGINGFACE_HUB_TOKEN` from `.env`.
-   - If they have not set one, point them at the `/quant-setup` skill (or `quant-agent setup` in a terminal for hidden input).
-   - For convenience when running outside the `quant-execute` skill, they can `source /home/ubuntu/model-quantization-agent/.agents/skills/_shared/load_env.sh` first.
+Report:
 
-Do not offer to run the script — execution is intentionally out of scope.
+- selected method, bit width, model, target, script path, and output directory;
+- Adapt trace path and recorded repository commit;
+- overlay bundle/hash when present;
+- validation checks and any skipped smoke stage;
+- that `quant-execute` is the next skill for launch/repair.
 
-## Guardrails
+Do not run the generated script in this skill. Do not silently fall back to another
+method after the user selects one. Do not mutate the canonical method checkout.
 
-- **Don't invent flag names.** Style B subprocesses must use flag strings copied from the cloned example's argparse/click block. If you can't find the source, fall back to Style A.
-- **Don't duplicate the torch/transformers baseline** in the install-steps comment block beyond the explicit baseline lines shown above. The Python agent treats those as preinstalled.
-- **Don't reference `.venvs/<method>/` paths in the script.** The Python agent uses that layout because its executor builds those venvs; this skill does not. Use `/tmp/quant-<chosen.id>/repo` for cloned-repo references and let the user activate their own venv.
-- **Don't fan out per-method retrieval or arxiv fetches during Research.** Research is catalog-only. The `notes` field in `methods.yaml` plus your model knowledge is the grounding.
-- **Don't pick a winner during Research.** The user picks.
-- **Don't proceed if the model can't be resolved.** Ask for an exact HF id.
-- **Don't recommend sub-4-bit on pre-Hopper GPUs.** See the Bit-width hardware rule in Phase 2. NVIDIA hardware has no native 1/2/3-bit datatype; software-only dequant kernels for those bit widths target sm_80 and have poor performance on sm_86 (A10G), no validated path on Turing/Volta. If the user explicitly asks for 2-bit on A10G, push back and suggest 4-bit on a method like AWQ or AutoRound instead.
+## Bundled resources
 
-## Reference files (bundled in this skill)
-
-- `reference/methods.yaml` — the 35-method catalog, generated from `src/quant_agent/data/methods.yaml`. Authoritative for `id`, `repos`, `bits`, `quality`, `speedup`, `needs_calibration`, `notes`.
-- `reference/model_aliases.yaml` — fuzzy model phrase → canonical HF id, generated from packaged data.
-- `reference/aws_instances.yaml` — instance type → `{vram_gb, gpu_count, gpu}`, generated from packaged data.
-- `reference/gpu_specs.yaml` — GPU model → `{compute_capability, gpu_arch}`, generated from packaged data.
-
-These four files are the entire grounding surface. If a fact you need is not in them and not derivable from the user's input or a single WebFetch on HuggingFace / GitHub, ask the user instead of guessing.
+- `reference/methods.yaml` — canonical product catalog mirror.
+- `reference/method_capabilities.yaml` — compatibility facts and provenance mirror.
+- `reference/model_aliases.yaml`, `aws_instances.yaml`, `gpu_specs.yaml` — resolution.
+- `scripts/evaluate_compatibility.py` — canonical deterministic gate.
+- `scripts/method_env.py` — catalog-locked clone and dynamic method venv build.
+- `scripts/write_overlay.py` — validated content-addressed overlay writer.
+- `scripts/validate_script.py` — canonical staged validation and overlay contract.

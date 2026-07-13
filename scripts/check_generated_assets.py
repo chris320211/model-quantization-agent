@@ -12,7 +12,26 @@ MIRRORS = [
     ROOT / ".agents" / "skills" / "quant" / "reference",
     ROOT / ".claude" / "skills" / "quant" / "reference",
 ]
-FILES = ("methods.yaml", "model_aliases.yaml", "aws_instances.yaml", "gpu_specs.yaml")
+FILES = (
+    "methods.yaml",
+    "method_capabilities.yaml",
+    "model_aliases.yaml",
+    "aws_instances.yaml",
+    "gpu_specs.yaml",
+)
+
+MIRRORED_SKILL_FILES = (
+    "quant/SKILL.md",
+    "quant/reference/pipeline_contract.md",
+    "quant/scripts/evaluate_compatibility.py",
+    "quant/scripts/method_env.py",
+    "quant/scripts/write_overlay.py",
+    "quant/scripts/validate_script.py",
+    "quant-execute/SKILL.md",
+    "quant-execute/scripts/launch_job.py",
+    "quant-tune/SKILL.md",
+    "quant-setup/SKILL.md",
+)
 
 
 def main() -> int:
@@ -21,6 +40,12 @@ def main() -> int:
         for name in FILES:
             if (CANON / name).read_bytes() != (mirror / name).read_bytes():
                 errors.append(f"catalog drift: {mirror / name}")
+
+    agent_skills = ROOT / ".agents" / "skills"
+    claude_skills = ROOT / ".claude" / "skills"
+    for relative in MIRRORED_SKILL_FILES:
+        if (agent_skills / relative).read_bytes() != (claude_skills / relative).read_bytes():
+            errors.append(f"skill mirror drift: {relative}")
 
     methods = yaml.safe_load((CANON / "methods.yaml").read_text())
     if len(methods) != 35:
@@ -44,6 +69,14 @@ def main() -> int:
             errors.append(f"obsolete .Codex path: {path}")
         if "34 methods" in text or "34-method" in text:
             errors.append(f"obsolete method count: {path}")
+        for obsolete in (
+            "/tmp/quant-",
+            "does not build venvs",
+            "AST-only validation",
+            "stage 1 (`ast.parse`) only",
+        ):
+            if obsolete in text:
+                errors.append(f"obsolete skill pipeline text {obsolete!r}: {path}")
 
     if errors:
         print("\n".join(errors), file=sys.stderr)

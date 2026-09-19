@@ -8,7 +8,7 @@ Do not commit weight files. Do not edit `catalog.json`.
 
 ```bash
 PY=$(command -v python || command -v python3)
-S="$PY .agents/skills/_shared/scripts"
+S="$PY agents/skills/_shared/scripts"
 $S/compare.py --job-id <job_id> --request out/requests/<slug>.json \
   --hub-url https://huggingface.co/<org>/<name> --export-contribution
 $S/compare.py --accept-contribution compare/contributions/<file>.json

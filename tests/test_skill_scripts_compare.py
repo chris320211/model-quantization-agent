@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = ROOT / ".agents" / "skills" / "_shared" / "scripts"
+SCRIPTS = ROOT / "agents" / "skills" / "_shared" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 import compare as compare_mod  # noqa: E402
@@ -294,9 +294,9 @@ def test_pick_best_none_when_nothing_quality_ok():
 
 
 def test_quant_skills_point_at_compare_index():
-    parent = (ROOT / ".agents" / "skills" / "quant" / "SKILL.md").read_text()
-    bench = (ROOT / ".agents" / "skills" / "quant-benchmark" / "SKILL.md").read_text()
-    publish = (ROOT / ".agents" / "skills" / "quant-publish" / "SKILL.md").read_text()
+    parent = (ROOT / "agents" / "skills" / "quant" / "SKILL.md").read_text()
+    bench = (ROOT / "agents" / "skills" / "quant-benchmark" / "SKILL.md").read_text()
+    publish = (ROOT / "agents" / "skills" / "quant-publish" / "SKILL.md").read_text()
     assert "compare/" in parent
     assert "catalog.json" in parent
     assert "compare/" in bench

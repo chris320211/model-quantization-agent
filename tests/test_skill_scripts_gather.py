@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = ROOT / ".agents" / "skills" / "_shared" / "scripts"
+SCRIPTS = ROOT / "agents" / "skills" / "_shared" / "scripts"
 
 
 def _run(script: str, args: list[str], *, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:

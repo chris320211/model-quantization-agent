@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = ROOT / ".agents" / "skills" / "_shared" / "scripts"
+SCRIPTS = ROOT / "agents" / "skills" / "_shared" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 import diagnose as diagnose_mod  # noqa: E402

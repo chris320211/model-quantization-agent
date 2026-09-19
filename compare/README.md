@@ -7,7 +7,7 @@ is the library index).
 
 ```bash
 PY=$(command -v python || command -v python3)
-S="$PY .agents/skills/_shared/scripts"
+S="$PY agents/skills/_shared/scripts"
 $S/compare.py --model-id <org/model> --gpu-instance <instance>
 $S/compare.py --model-id <org/model> --method <name> --gpu-instance <instance> --fetch
 ```

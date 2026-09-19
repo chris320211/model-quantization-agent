@@ -4,7 +4,7 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = ROOT / ".agents" / "skills" / "_shared" / "scripts"
+SCRIPTS = ROOT / "agents" / "skills" / "_shared" / "scripts"
 SKILL_NAMES = (
     "quant",
     "quant-setup",
@@ -41,32 +41,34 @@ REQUIRED_SCRIPTS = (
 
 
 def test_skill_docs_have_no_obsolete_codex_paths():
-    for path in (ROOT / ".agents" / "skills").glob("*/SKILL.md"):
+    for path in (ROOT / "agents" / "skills").glob("*/SKILL.md"):
         text = path.read_text()
         assert ".Codex/" not in text
         assert "quant-agent ask" not in text
         assert "quant-agent setup" not in text
-    contract = (ROOT / ".agents" / "skills" / "_shared" / "pipeline_contract.md").read_text()
+    contract = (ROOT / "agents" / "skills" / "_shared" / "pipeline_contract.md").read_text()
+    assert "agents/AGENTS.md" in contract
+    assert "Never read" in contract
     assert "Retry loop (parent)" in contract
     assert "retry_gpu_jobs_max" in contract
     assert "issue_codes" in contract
-    subagents = (ROOT / ".agents" / "skills" / "_shared" / "subagents.md").read_text()
+    subagents = (ROOT / "agents" / "skills" / "_shared" / "subagents.md").read_text()
     assert "One stage per subagent" in subagents
     assert "quant-setup" in subagents
     assert "recommended_action" in subagents
     assert "compare/" in subagents
-    parent = (ROOT / ".agents" / "skills" / "quant" / "SKILL.md").read_text()
+    parent = (ROOT / "agents" / "skills" / "quant" / "SKILL.md").read_text()
     assert "Retry loop (you)" in parent
     assert "quant-retry" in parent
     assert "every method × model × GPU" in parent
     assert "compare/" in parent
     assert "LOOP:" in parent
-    diagnose = (ROOT / ".agents" / "skills" / "quant-diagnose" / "SKILL.md").read_text()
+    diagnose = (ROOT / "agents" / "skills" / "quant-diagnose" / "SKILL.md").read_text()
     assert "method-agnostic" in diagnose
     assert "1.5" in diagnose
-    gather = (ROOT / ".agents" / "skills" / "quant-gather" / "SKILL.md").read_text()
+    gather = (ROOT / "agents" / "skills" / "quant-gather" / "SKILL.md").read_text()
     assert "retry_gpu_jobs_max=2" in gather
-    kernel = (ROOT / ".agents" / "skills" / "quant-kernel" / "SKILL.md").read_text()
+    kernel = (ROOT / "agents" / "skills" / "quant-kernel" / "SKILL.md").read_text()
     assert "pack_i4" in kernel
     assert "Linear4bit" in kernel
     assert "cuda_kernel_dtype_mismatch" in kernel
@@ -78,7 +80,7 @@ def test_skill_docs_have_no_obsolete_codex_paths():
     assert "recommended_action" in parent
     assert "inspect overlay" in parent or "Never inspect overlay" in parent
     assert "cuda_kernel_dtype_mismatch" in diagnose
-    port = (ROOT / ".agents" / "skills" / "quant-port" / "SKILL.md").read_text()
+    port = (ROOT / "agents" / "skills" / "quant-port" / "SKILL.md").read_text()
     assert "cast_linear4bit_kernel_dtypes" in port or "float16" in kernel
     assert "quantized_save" in port
     assert "pack_i4" in contract
@@ -87,7 +89,7 @@ def test_skill_docs_have_no_obsolete_codex_paths():
     assert "catalog.json" in contract
     assert "contributions" in contract
     assert "model_id" in contract and "gpu_instance" in contract
-    publish = (ROOT / ".agents" / "skills" / "quant-publish" / "SKILL.md").read_text()
+    publish = (ROOT / "agents" / "skills" / "quant-publish" / "SKILL.md").read_text()
     assert "compare/" in publish
     assert "artifact store" in publish.lower() or "not the comparison" in publish.lower()
 
@@ -98,7 +100,7 @@ def test_credential_loader_does_not_execute_values(tmp_path):
     marker = tmp_path / "executed"
     credentials.write_text(f"HF_TOKEN=$(touch {marker})\n")
     credentials.chmod(0o600)
-    loader = ROOT / ".agents" / "skills" / "_shared" / "load_env.sh"
+    loader = ROOT / "agents" / "skills" / "_shared" / "load_env.sh"
     result = subprocess.run(
         ["bash", "-c", 'source "$1" "$2"; test -n "$HF_TOKEN"', "bash", str(loader), str(credentials)],
         capture_output=True, text=True, check=False,
@@ -107,18 +109,47 @@ def test_credential_loader_does_not_execute_values(tmp_path):
     assert not marker.exists()
 
 
-def test_skill_mirrors_match_exactly():
-    agents = ROOT / ".agents" / "skills"
-    for tree in (ROOT / ".claude" / "skills", ROOT / ".cursor" / "skills"):
-        for name in SKILL_NAMES:
-            relative = f"{name}/SKILL.md"
-            assert (agents / relative).read_bytes() == (tree / relative).read_bytes()
-        for relative in (
-            "_shared/pipeline_contract.md",
-            "_shared/subagents.md",
-            "_shared/load_env.sh",
-        ):
-            assert (agents / relative).read_bytes() == (tree / relative).read_bytes()
+def test_env_example_lists_secret_keys_without_values():
+    example = (ROOT / ".env.example").read_text()
+    assert "HF_TOKEN=" in example
+    assert "GITHUB_TOKEN=" in example
+    assert "HUGGINGFACE_HUB_TOKEN" not in example
+    for line in example.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        _, _, value = stripped.partition("=")
+        assert value == "", line
+    setup = (ROOT / "agents" / "skills" / "quant-setup" / "SKILL.md").read_text()
+    assert "once per machine" in setup
+    assert ".env.example" in setup
+    assert "with agent tools" in setup
+    readme = (ROOT / "README.md").read_text()
+    assert "cp .env.example .env" in readme
+
+
+def test_single_skill_tree_and_agents_md():
+    agents_md = ROOT / "agents" / "AGENTS.md"
+    assert agents_md.is_file()
+    agents = agents_md.read_text()
+    assert "agents/skills/quant/SKILL.md" in agents
+    assert (ROOT / "agents" / "skills" / "quant" / "SKILL.md").is_file()
+    assert not (ROOT / "AGENTS.md").exists()
+    assert not (ROOT / "skills").exists()
+    assert not (ROOT / ".agents").exists()
+    assert not (ROOT / ".claude").exists()
+    assert not (ROOT / ".cursor").exists()
+
+
+def test_agents_md_forbids_reading_or_printing_secrets():
+    agents = (ROOT / "agents" / "AGENTS.md").read_text()
+    assert "## Secrets" in agents
+    assert "Never read" in agents
+    assert "Never print" in agents
+    assert "cat .env" in agents
+    assert "printenv" in agents
+    assert "test -f .env" in agents
+    assert "with agent tools" in agents
 
 
 def test_shared_scripts_exist_and_do_not_import_quant_agent():
@@ -133,44 +164,50 @@ def test_shared_scripts_exist_and_do_not_import_quant_agent():
 def test_skills_resolve_python_or_python3():
     marker = "command -v python || command -v python3"
     for name in SKILL_NAMES:
-        text = (ROOT / ".agents" / "skills" / name / "SKILL.md").read_text()
+        text = (ROOT / "agents" / "skills" / name / "SKILL.md").read_text()
         assert marker in text, name
     for relative in ("_shared/pipeline_contract.md", "_shared/subagents.md"):
-        text = (ROOT / ".agents" / "skills" / relative).read_text()
+        text = (ROOT / "agents" / "skills" / relative).read_text()
         assert marker in text, relative
     readme = (ROOT / "README.md").read_text()
     assert marker in readme
-    contract = (ROOT / ".agents" / "skills" / "_shared" / "pipeline_contract.md").read_text()
+    contract = (ROOT / "agents" / "skills" / "_shared" / "pipeline_contract.md").read_text()
     assert "drops_runtime" in contract
 
 
 def test_skills_point_at_shared_scripts():
+    stale = (".agents/skills", ".claude/skills", ".cursor/skills", "python .agents")
+    tree = ROOT / "agents"
+    for path in tree.rglob("*"):
+        if not path.is_file() or path.suffix not in {".md", ".py", ".sh"}:
+            continue
+        text = path.read_text()
+        for marker in stale:
+            if marker in text and path.name == "AGENTS.md":
+                continue
+            assert marker not in text, f"{path.relative_to(ROOT)} still mentions {marker}"
     for name in ("quant-gather", "quant-port", "quant-run", "quant-verify", "quant-benchmark", "quant-diagnose", "quant-kernel", "quant-publish"):
-        text = (ROOT / ".agents" / "skills" / name / "SKILL.md").read_text()
-        assert ".agents/skills/_shared/scripts" in text
+        text = (ROOT / "agents" / "skills" / name / "SKILL.md").read_text()
+        assert "agents/skills/_shared/scripts" in text
         assert "out/ports/" not in text
-    port = (ROOT / ".agents" / "skills" / "quant-port" / "SKILL.md").read_text()
-    kernel = (ROOT / ".agents" / "skills" / "quant-kernel" / "SKILL.md").read_text()
+    port = (ROOT / "agents" / "skills" / "quant-port" / "SKILL.md").read_text()
+    kernel = (ROOT / "agents" / "skills" / "quant-kernel" / "SKILL.md").read_text()
     assert "out/overlays/" in port
     assert "kernel_triton" in kernel
 
 
 def test_obsolete_catalog_product_is_gone():
-    for tree in (
-        ROOT / ".agents" / "skills",
-        ROOT / ".claude" / "skills",
-        ROOT / ".cursor" / "skills",
-    ):
-        assert not (tree / "quant-execute").exists()
-        assert not (tree / "quant-tune").exists()
-        assert not (tree / "quant" / "reference" / "methods.yaml").exists()
+    tree = ROOT / "agents" / "skills"
+    assert not (tree / "quant-execute").exists()
+    assert not (tree / "quant-tune").exists()
+    assert not (tree / "quant" / "reference" / "methods.yaml").exists()
     assert not (ROOT / "src" / "quant_agent").exists()
     assert not (ROOT / "docs").exists()
     assert not (ROOT / "reports").exists()
     assert not (ROOT / "agent_flowchart.html").exists()
     assert not (ROOT / "scripts").exists()
-    assert (ROOT / ".agents" / "skills" / "_shared" / "reference" / "aws_instances.yaml").is_file()
-    assert (ROOT / ".agents" / "skills" / "_shared" / "reference" / "gpu_specs.yaml").is_file()
+    assert (ROOT / "agents" / "skills" / "_shared" / "reference" / "aws_instances.yaml").is_file()
+    assert (ROOT / "agents" / "skills" / "_shared" / "reference" / "gpu_specs.yaml").is_file()
     readme = (ROOT / "README.md").read_text()
     assert "quant-agent ask" not in readme
     assert "quant-agent setup" not in readme

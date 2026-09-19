@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = ROOT / ".agents" / "skills" / "_shared" / "scripts"
+SCRIPTS = ROOT / "agents" / "skills" / "_shared" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 import benchmark as benchmark_mod  # noqa: E402
@@ -52,7 +52,7 @@ def test_compare_metrics_rejects_nonfinite_ppl():
 
 
 def test_quant_benchmark_skill_requires_wikitext_and_both_sides():
-    text = (ROOT / ".agents" / "skills" / "quant-benchmark" / "SKILL.md").read_text()
+    text = (ROOT / "agents" / "skills" / "quant-benchmark" / "SKILL.md").read_text()
     assert "benchmark.py" in text
     assert "WikiText-2" in text
     assert "fp16" in text
@@ -62,10 +62,10 @@ def test_quant_benchmark_skill_requires_wikitext_and_both_sides():
 
 
 def test_parent_pipeline_always_launches_benchmark():
-    quant = (ROOT / ".agents" / "skills" / "quant" / "SKILL.md").read_text()
-    contract = (ROOT / ".agents" / "skills" / "_shared" / "pipeline_contract.md").read_text()
+    quant = (ROOT / "agents" / "skills" / "quant" / "SKILL.md").read_text()
+    contract = (ROOT / "agents" / "skills" / "_shared" / "pipeline_contract.md").read_text()
     assert "quant-benchmark" in quant
     assert "always" in quant.lower()
     assert "quant-benchmark" in contract
-    verify = (ROOT / ".agents" / "skills" / "quant-verify" / "SKILL.md").read_text()
+    verify = (ROOT / "agents" / "skills" / "quant-verify" / "SKILL.md").read_text()
     assert "quant-benchmark" in verify

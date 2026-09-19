@@ -18,7 +18,7 @@ then download weights themselves from Hugging Face.
 
 ```bash
 PY=$(command -v python || command -v python3)
-S="$PY .agents/skills/_shared/scripts"
+S="$PY agents/skills/_shared/scripts"
 $S/compare.py --model-id microsoft/Phi-3-mini-4k-instruct
 $S/compare.py --model-id microsoft/Phi-3-mini-4k-instruct --gpu-instance g5.2xlarge --best
 $S/compare.py --model-id microsoft/Phi-3-mini-4k-instruct --method FlatQuant --fetch
@@ -38,7 +38,7 @@ Do not commit checkpoints and do not edit `catalog.json`.
 
 ```bash
 PY=$(command -v python || command -v python3)
-S="$PY .agents/skills/_shared/scripts"
+S="$PY agents/skills/_shared/scripts"
 $S/compare.py --job-id <job_id> --request out/requests/<slug>.json \
   --hub-url https://huggingface.co/<you>/<slug> --export-contribution
 ```
@@ -48,14 +48,14 @@ Details: `compare/contributions/README.md`. After merge, the row shows up in
 
 ## Agent workflow
 
-Codex, Claude, and Cursor load `.agents/skills` (mirrored under
-`.claude/skills` and `.cursor/skills`). Helpers:
-`.agents/skills/_shared/scripts/`. No method catalog inside the agent loop.
+Cursor, Claude, and Codex read `agents/AGENTS.md`, then `agents/skills/`.
+Helpers: `agents/skills/_shared/scripts/`. No method catalog inside the agent loop.
 
 `port AWQ to Qwen/Qwen2.5-0.5B-Instruct on g5.xlarge`
 
-1. **quant** (parent) collects the three inputs. `quant-setup` stays in the parent
-   if a gated model needs `HF_TOKEN`.
+1. **quant** (parent) collects the three inputs. **quant-setup** stays in the
+   parent on first load: create `.env` once from `.env.example`, load it every
+   shell. Do not recreate `.env` if it already exists.
 2. **quant-gather** — paper + GitHub, clone, HF snapshot, GPU facts, one venv.
    Writes `out/requests/<slug>.json`.
 3. **quant-port** — `dispatch` / `llama_alias` / `adapter_only`, validate only,
@@ -93,18 +93,15 @@ box with driver + CUDA 12.x, Python ≥ 3.10, git). Suggested: `g5.xlarge` (≤1
 git clone <this repo> && cd model-quantization-agent
 PY=$(command -v python || command -v python3)
 "$PY" -m pip install -c constraints.txt -e '.[dev]'
+cp .env.example .env
+chmod 600 .env
+# edit .env in your editor; put HF_TOKEN=... (and optional GITHUB_TOKEN=)
+source agents/skills/_shared/load_env.sh .env
 ```
 
-Gated models — export a token in the parent shell, never in chat:
+Create `.env` **once** on this machine. Every new terminal, only `source` the
+loader. Never paste token values into chat. `.env` is gitignored.
 
-```bash
-read -rsp "HuggingFace token: " HF_TOKEN
-export HF_TOKEN
-export HUGGINGFACE_HUB_TOKEN="$HF_TOKEN"
-echo
-```
-
-Optional mode-600 `.env`, then `source .agents/skills/_shared/load_env.sh .env`.
 Open the repo in Codex, Claude Code, or Cursor and invoke the `quant` skill.
 
 `--allow-unsafe-host-execution` runs third-party and generated code. Use it only
@@ -115,11 +112,11 @@ the HF token only when needed.
 
 ```bash
 PY=$(command -v python || command -v python3)
-"$PY" .agents/skills/_shared/scripts/jobs.py list
-"$PY" .agents/skills/_shared/scripts/jobs.py status <job_id>
-"$PY" .agents/skills/_shared/scripts/jobs.py logs <job_id> -n 200
-"$PY" .agents/skills/_shared/scripts/jobs.py kill <job_id>
-"$PY" .agents/skills/_shared/scripts/compare.py \
+"$PY" agents/skills/_shared/scripts/jobs.py list
+"$PY" agents/skills/_shared/scripts/jobs.py status <job_id>
+"$PY" agents/skills/_shared/scripts/jobs.py logs <job_id> -n 200
+"$PY" agents/skills/_shared/scripts/jobs.py kill <job_id>
+"$PY" agents/skills/_shared/scripts/compare.py \
   --model-id <org/model> --gpu-instance <instance> --best
 ```
 

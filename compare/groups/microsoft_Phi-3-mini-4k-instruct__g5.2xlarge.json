@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "model_id": "microsoft/Phi-3-mini-4k-instruct",
+  "gpu_instance": "g5.2xlarge",
+  "gpu_name": "NVIDIA A10G",
+  "fp16_baseline": {
+    "perplexity": 6.332275669117074,
+    "tokens_per_s": 3387.5933448585142,
+    "peak_vram_gb": 9.680975437164307
+  },
+  "methods": [
+    {
+      "method_name": "FlatQuant",
+      "slug": "flatquant-phi3-mini-4k-g52xlarge",
+      "job_id": "20260919T202736Z-5a1860",
+      "quality_ok": true,
+      "ppl": 7.393646309110877,
+      "ppl_ratio": 1.1676128291713794,
+      "tokens_per_s": 5105.929253072313,
+      "peak_vram_gb": 3.3546090126037598,
+      "improved_throughput": true,
+      "improved_vram": true,
+      "packed": true,
+      "artifact_dir": "quantized/flatquant-phi3-mini-4k-g52xlarge",
+      "hub_url": null,
+      "verification_status": "passed",
+      "rank": 1
+    }
+  ],
+  "best": {
+    "method_name": "FlatQuant",
+    "slug": "flatquant-phi3-mini-4k-g52xlarge",
+    "job_id": "20260919T202736Z-5a1860",
+    "rank": 1,
+    "why": "quality_ok, then higher WikiText-2 tok/s, then lower peak VRAM, prefer packed, then lower ppl_ratio",
+    "artifact_dir": "quantized/flatquant-phi3-mini-4k-g52xlarge",
+    "hub_url": null
+  }
+}

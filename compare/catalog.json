@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "rows": [
+    {
+      "model_id": "microsoft/Phi-3-mini-4k-instruct",
+      "method_name": "FlatQuant",
+      "gpu_instance": "g5.2xlarge",
+      "gpu_name": "NVIDIA A10G",
+      "rank": 1,
+      "is_best": true,
+      "quality_ok": true,
+      "ppl": 7.393646309110877,
+      "ppl_ratio": 1.1676128291713794,
+      "tokens_per_s": 5105.929253072313,
+      "peak_vram_gb": 3.3546090126037598,
+      "fp16_ppl": 6.332275669117074,
+      "fp16_tokens_per_s": 3387.5933448585142,
+      "fp16_peak_vram_gb": 9.680975437164307,
+      "packed": true,
+      "hub_url": null,
+      "hub_repo_id": null,
+      "artifact_dir": "quantized/flatquant-phi3-mini-4k-g52xlarge",
+      "job_id": "20260919T202736Z-5a1860",
+      "slug": "flatquant-phi3-mini-4k-g52xlarge"
+    }
+  ]
+}

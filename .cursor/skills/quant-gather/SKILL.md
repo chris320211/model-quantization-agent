@@ -12,7 +12,8 @@ description: >-
 You are a **subagent**. Do only gather. Read
 [_shared/pipeline_contract.md](../_shared/pipeline_contract.md).
 
-`S=python .agents/skills/_shared/scripts`
+`PY=$(command -v python || command -v python3)`
+`S="$PY .agents/skills/_shared/scripts"`
 
 Host-mutating steps need `--allow-unsafe-host-execution` on an isolated box.
 
@@ -56,7 +57,12 @@ Host-mutating steps need `--allow-unsafe-host-execution` on an isolated box.
    ```
 
    Add extra `--step` values from the repo README (python/pip only; no shell
-   operators). Torch pins are applied automatically.
+   operators). Torch pins match this host's **nvcc/toolkit** (not nvidia-smi
+   driver CUDA) and are re-applied after `pip install -r` and before local
+   `pip install -e .`, so method requirements cannot replace them with a
+   CUDA-mismatched wheel. Local editable installs get `--no-build-isolation`
+   so `setup.py` can import that torch. PyPI CUDA wheels like flash-attn still
+   need an explicit `--no-build-isolation` extra step when the README says so.
 
 7. Write the handoff:
 
@@ -65,6 +71,9 @@ Host-mutating steps need `--allow-unsafe-host-execution` on an isolated box.
    ```
 
    Include optional GPU fields from `gpu.py` when present.
+   `request.py` seeds `retry_gpu_jobs_used=0`, `retry_gpu_jobs_max=2`, and
+   `tried_overlays=[]` so the parent retry loop works for this slug without
+   method-specific JSON.
 
 Slug: lowercase method + short model + instance, e.g. `awq-qwen25-05b-g5xlarge`.
 

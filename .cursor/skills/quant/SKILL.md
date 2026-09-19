@@ -12,25 +12,117 @@ Read [_shared/pipeline_contract.md](../_shared/pipeline_contract.md) and
 [_shared/subagents.md](../_shared/subagents.md) first.
 
 You are the **parent**. Collect `method_name`, `model_name`, `gpu_instance`.
-If a gated model needs HF auth and it is missing, follow `quant-setup` **in this
-session**. Then launch **one subagent per stage**, in order. Do not do stage work
-yourself. Helpers: `python .agents/skills/_shared/scripts/<name>.py`.
+This loop is **the same for every method × model × GPU**. Do not skip diagnose
+or invent a method-specific shortcut. If a gated model needs HF auth and it is
+missing, follow `quant-setup` **in this session**. Then launch **one subagent
+per stage**, in order. Do not do stage work yourself. Helpers:
+`"$PY" .agents/skills/_shared/scripts/<name>.py` with
+`PY=$(command -v python || command -v python3)`.
 
 ## Order
 
-1. Gather → returns `out/requests/<slug>.json`
-2. Port → returns ranked overlay dirs under `out/overlays/<slug>/<strategy>/`
-3. Run → returns `job_id`
-4. Verify → passed / failed (must be the saved artifact, not Hub fp16)
-5. Baseline compare (parent may relaunch verify with `--baseline`)
-6. Kernel subagent **only if** quantized is not better, or the user asked to go faster
-7. Tell the user where weights (`quantized/<slug>`) and job metrics live
+1. Gather → `out/requests/<slug>.json` (seeds `retry_gpu_jobs_max=2`, `used=0`)
+2. Port → ranked overlays under `out/overlays/<slug>/<strategy>/`
+3. Run → `job_id` (winner overlay only)
+4. Verify → saved artifact must generate (not Hub fp16)
+5. Benchmark → **always** WikiText-2 vs the fp16 snapshot
+6. **Retry loop (you)** until stop (below). Do not spawn a `quant-retry` skill.
+7. Tell the user where weights (`quantized/<slug>`), `jobs/<job_id>/benchmark.json`,
+   `diagnose.json`, and `compare/catalog.json` live. Hugging Face Hub is
+   pullable weights; the library table is `compare/catalog.json` (filter model,
+   method, instance; `is_best` is the pick; `--fetch` prints
+   `huggingface-cli download`).
+8. If verify passed and `quality_ok`, **quant-publish** in this session (not a
+   subagent): stage `out/hub/<slug>/` and upload to Hugging Face Hub when
+   `HF_TOKEN` is already in the environment. Same for every method. Upload does
+   not replace `compare/` — it only adds `hub_url` on that method's row and
+   writes `compare/contributions/<model>__<gpu>__<method>.json`. Tell the user
+   they can PR that file so others see the run in `catalog.json`. Do not commit
+   weight files.
+
+## Retry loop (any inputs)
+
+This loop is **the same for every method × model × GPU**. It is not a FlatQuant,
+Phi-3, or A10G special case. Do not skip diagnose. Do not invent a
+method-specific shortcut. Do not write overlays, apply patches, or run GPU
+smokes yourself — only launch stage subagents.
+
+After **every** verify (pass or fail) launch `quant-diagnose` (no benchmark if
+verify failed). After **every** passed benchmark launch `quant-diagnose` even
+when `quality_ok` and `efficiency_improved` are already true, so stop is
+file-driven (`recommended_action: none`). Then execute **only**
+`recommended_action` from `jobs/<job_id>/diagnose.json`. Never inspect overlay
+text for SDPA/`kron_matmul`. Never paste raw PPL, logs, or a narrative into
+port/run workers.
+
+```text
+job = winner run
+verify(job)
+if verify failed:
+  diagnose(job)   # no benchmark
+  goto HANDLE
+benchmark(job)
+LOOP:
+  diagnose(job)
+HANDLE:
+  action = diagnose.json recommended_action
+  if action == none: STOP
+  if action == retry_ranked_overlay:
+      job = quant-run(next_overlay_dir, next_script, parent_job_id, issue)
+  elif action == author_fix:
+      if next_overlay_dir is set: treat as retry_ranked_overlay
+      else: diagnose_fix worker (validate only); job = quant-run(that overlay)
+  elif action == kernel:
+      overlay = quant-kernel; job = quant-run(kernel overlay)
+  record-retry(tried overlay, new job_id, diagnose path)
+  verify(job)
+  if verify failed: diagnose(job); goto HANDLE
+  benchmark(job)
+  goto LOOP
+```
+
+Budget: `retry_gpu_jobs_max` default **2** extra GPU jobs after the first
+winner for **quality** retries (ranked overlay, `author_fix` for dropped
+runtime / exploded PPL). Diagnose may still recommend packed-path GPU work
+when `remaining` is 0 (`cuda_kernel_dtype_mismatch`, `packed_loader_failed`,
+`eval_runtime_flags_missing`, `prefill_kernel_missing`, first packed kernel):
+at most **two** jobs past max for packed verify/eval-flag fixes, and at most
+**two** `kernel_triton` overlays (complete pack overlay + one prefill
+follow-up if the first missed SDPA/flash). You do **not** raise the budget
+yourself and you do **not** STOP just because `remaining` is 0 when diagnose
+says `kernel` / packed-path `author_fix`. STOP only on `recommended_action:
+none`. Do not fall back to dense fakequant. One GPU job at a time.
+
+Kernel overlay must be **complete** on the first `quant-kernel` launch (see
+`quant-kernel`): if the repo has packed/realquant, pack in that overlay; cast
+kernel dtypes; restore eval-only flags; use SDPA/flash for 2048-token prefill.
+A second kernel is only for `prefill_kernel_missing`.
+
+| action | You launch |
+| --- | --- |
+| `retry_ranked_overlay` | `quant-run` with `next_overlay_dir` / `next_script`, `parent_job_id`, `issue:` from `issue_codes`. Then verify; benchmark only if verify passed. |
+| `author_fix` | One port-style worker `strategy: diagnose_fix` with `issue:` codes and `diagnose.json` path (validate only). Then one `quant-run` if diagnose still wants a GPU job. |
+| `kernel` | `quant-kernel` only when diagnose says so (quality OK, efficiency not, or `prefill_kernel_missing`). Not a quality retry. |
+| `none` | Stop and report. |
+
+After a retry job starts:
+
+```bash
+$S/request.py out/requests/<slug>.json --record-retry \
+  --tried-overlay <overlay_dir> --last-job-id <new_job_id> \
+  --last-diagnose-path jobs/<prior_job_id>/diagnose.json
+```
+
+If `next_overlay_dir` points at an untried keep-runtime overlay, run it
+(`retry_ranked_overlay`) instead of authoring another overlay. Only execute
+`author_fix` when `next_overlay_dir` is empty. Do not retry OOM-at-same-config.
 
 ## Example
 
 User: “port AWQ to Qwen/Qwen2.5-0.5B-Instruct on g5.xlarge”
 
-Launch gather (see [_shared/subagents.md](../_shared/subagents.md)).
+Same steps for FlatQuant, GPTQ, or any other method name, any HF id, any
+instance string. Launch gather (see [_shared/subagents.md](../_shared/subagents.md)).
 
 Then launch **port** as a coordinator (it fans out up to three strategy
 subagents). Use the **winner** overlay for run. If verify fails on an arch/loader
@@ -46,6 +138,9 @@ Script: <winner_script>
 Do only run. Return job_id.
 ```
 
-Then verify with that `job_id` and the same request JSON. Stop on verify failure
-unless it is a loader bug (then the next ranked port overlay). Kernel subagent
-only after a failed benefit check.
+Then verify with that `job_id` and the same request JSON. If verify fails,
+launch `quant-diagnose` (no benchmark). Packed CUDA scale asserts stay on
+the packed path; only unpacked `loader_arch` may try the next ranked overlay.
+Then **always** launch `quant-benchmark` after a **passed** verify (do not skip,
+do not replace it with `verify --baseline`). Enter the retry loop above. Kernel
+only if diagnose says `kernel`.

@@ -13,6 +13,9 @@ never paste token values into a subagent prompt.
 
 - **Skills path:** Codex/Claude/Cursor run these skills in the active session.
   There is no `quant-agent` CLI.
+- **Interpreter:** `PY=$(command -v python || command -v python3)`. Deep Learning
+  AMI / Ubuntu GPU hosts often have `python3` only. Install helper deps once:
+  `"$PY" -m pip install -c constraints.txt -e '.[dev]'`.
 - **Model access:** gated Hugging Face models need `HF_TOKEN` or
   `HUGGINGFACE_HUB_TOKEN` in the parent process.
 - **Repository access:** `GITHUB_TOKEN` is optional and only raises API rate limits.

@@ -9,10 +9,11 @@ description: >-
 # Quant Port
 
 If the prompt has **no** `strategy:`, you are the **coordinator**.
-If it has `strategy: dispatch|llama_alias|adapter_only`, you are a **worker**.
+If it has `strategy: dispatch|llama_alias|adapter_only|diagnose_fix`, you are a **worker**.
 Request JSON path is required. Never edit the cloned repo.
 
-`S=python .agents/skills/_shared/scripts`
+`PY=$(command -v python || command -v python3)`
+`S="$PY .agents/skills/_shared/scripts"`
 
 ## Coordinator
 
@@ -42,6 +43,12 @@ later fails with a loader/arch bug, the parent runs the **next** overlay — it
 does not spawn three new authors.
 
 ## Worker
+
+If it has `strategy: diagnose_fix`, you are a **bounded fix worker** (not a
+fourth random port style). Read `jobs/<job_id>/diagnose.json`. Author one overlay
+that addresses those **typed** `issue:` codes (for example keep-runtime save
+for `transform_or_runtime_dropped_on_save`). Do not retune from raw PPL. Validate
+only; do not launch a GPU job. Same worker for every method × model × GPU.
 
 Do only your `strategy`. Read the request JSON, paper, and `.venvs/<slug>/repo`
 (read-only). Author a unified diff and a wrapper script.
@@ -75,6 +82,18 @@ and string literals `"QUANT_AGENT_OVERLAY_DIR"` and `"QUANT_AGENT_METHOD_REPO"`
 (the launcher injects those env vars). `MODEL_ID` and `OUTPUT_DIR` must be the
 exact request values. Do not `from_pretrained(model_id)` for the quantized load
 path — load `OUTPUT_DIR` / `model_path`.
+
+If the cloned repo has packed/realquant (`pack_i4`, `Linear4bit`,
+`--quantized_save`, `deploy/` int4 matmul), the wrapper should **save that
+packed artifact** after calibration, not dense fp16 RTN. Fakequant is the
+calibrator; packed weights are what later stages reload. If the repo's CUDA
+bindings assert `float16` scales (`sym_quant` / `sym_dequant`), the overlay
+must cast kernel-facing `weight_scales` / activation scales to that dtype
+on pack **and** on adapter load (`cast_linear4bit_kernel_dtypes` or
+equivalent). Empty packed modules default to float32 buffers. The adapter
+must also restore eval-only flags that `state_dict` does not store
+(`restore_packed_eval_runtime`: `_eval_mode`, `use_diag=False`) and must
+not call `reparameterize_model` again on already packed weights.
 
 Place the wrapper next to the overlay as `out/overlays/<slug>/<strategy>/quantize.py`
 or inside the returned bundle notes. Do not launch a job. Do not build custom kernels.

@@ -24,7 +24,7 @@ GPU: NVIDIA A10G
 
 | Rank | Method | PPL ratio | tok/s | VRAM GB | packed | quality_ok | pull |
 | ---: | --- | ---: | ---: | ---: | --- | --- | --- |
-| 1 | FlatQuant | 1.1676 | 5105.9 | 3.355 | yes | yes | quantized/flatquant-phi3-mini-4k-g52xlarge |
+| 1 | FlatQuant | 1.1676 | 5105.9 | 3.355 | yes | yes | https://huggingface.co/chris320211/flatquant-phi3-mini-4k-g52xlarge |
 
 **Best:** FlatQuant (`flatquant-phi3-mini-4k-g52xlarge`).
 

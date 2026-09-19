@@ -22,7 +22,7 @@
       "improved_vram": true,
       "packed": true,
       "artifact_dir": "quantized/flatquant-phi3-mini-4k-g52xlarge",
-      "hub_url": null,
+      "hub_url": "https://huggingface.co/chris320211/flatquant-phi3-mini-4k-g52xlarge",
       "verification_status": "passed",
       "rank": 1
     }
@@ -34,6 +34,6 @@
     "rank": 1,
     "why": "quality_ok, then higher WikiText-2 tok/s, then lower peak VRAM, prefer packed, then lower ppl_ratio",
     "artifact_dir": "quantized/flatquant-phi3-mini-4k-g52xlarge",
-    "hub_url": null
+    "hub_url": "https://huggingface.co/chris320211/flatquant-phi3-mini-4k-g52xlarge"
   }
 }

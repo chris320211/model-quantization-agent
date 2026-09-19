@@ -17,8 +17,8 @@
       "fp16_tokens_per_s": 3387.5933448585142,
       "fp16_peak_vram_gb": 9.680975437164307,
       "packed": true,
-      "hub_url": null,
-      "hub_repo_id": null,
+      "hub_url": "https://huggingface.co/chris320211/flatquant-phi3-mini-4k-g52xlarge",
+      "hub_repo_id": "chris320211/flatquant-phi3-mini-4k-g52xlarge",
       "artifact_dir": "quantized/flatquant-phi3-mini-4k-g52xlarge",
       "job_id": "20260919T202736Z-5a1860",
       "slug": "flatquant-phi3-mini-4k-g52xlarge"

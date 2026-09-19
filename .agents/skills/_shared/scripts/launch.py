@@ -184,6 +184,9 @@ def main() -> int:
     parser.add_argument("--overlay-dir", type=Path, required=True)
     parser.add_argument("--allow-unsafe-host-execution", action="store_true")
     parser.add_argument("--output-dir")
+    parser.add_argument("--parent-job-id")
+    parser.add_argument("--attempt", type=int, default=1)
+    parser.add_argument("--fix-note", help="Typed issue code from diagnose.json")
     args = parser.parse_args()
 
     payload = load_request(args.request)
@@ -193,6 +196,9 @@ def main() -> int:
             script_code=args.script.read_text(),
             overlay_dir=args.overlay_dir,
             output_dir=args.output_dir,
+            parent_job_id=args.parent_job_id,
+            attempt=args.attempt,
+            fix_note=args.fix_note,
         )
     print(meta.to_json())
     return 0

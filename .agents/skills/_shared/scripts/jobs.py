@@ -64,6 +64,8 @@ class JobMeta:
     overlay_path: str | None = None
     overlay_sha256: str | None = None
     worktree_path: str | None = None
+    benchmark_status: str | None = None  # passed | failed
+    benchmark_error: str | None = None
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), indent=2)

@@ -78,10 +78,67 @@ def _parse_install_step(command: str, python: Path) -> tuple[list[str], dict[str
 
     executable, *args = parts
     if executable in {"python", "python3", str(python)}:
-        return [str(python), *args], extra
+        return _with_no_build_isolation_for_local_install([str(python), *args]), extra
     if executable in {"pip", "pip3"}:
-        return [str(python), "-m", "pip", *args], extra
+        return _with_no_build_isolation_for_local_install([str(python), "-m", "pip", *args]), extra
     raise ValueError(f"executable {executable!r} is not allowed; use python or pip")
+
+
+def _pip_install_args(argv: list[str]) -> list[str] | None:
+    """Return tokens after `pip install` in a python -m pip argv, else None."""
+    try:
+        pip_at = argv.index("pip")
+        install_at = argv.index("install", pip_at + 1)
+    except ValueError:
+        return None
+    if pip_at < 1 or argv[pip_at - 1] != "-m":
+        return None
+    return argv[install_at + 1 :]
+
+
+def _is_local_project_install(argv: list[str]) -> bool:
+    """True for `pip install -e .` / local paths, not PyPI names or -r files."""
+    args = _pip_install_args(argv)
+    if args is None:
+        return False
+    skip_next = False
+    editable = False
+    targets: list[str] = []
+    for token in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if token in {"-e", "--editable"}:
+            editable = True
+            continue
+        if token.startswith("--editable="):
+            editable = True
+            targets.append(token.split("=", 1)[1])
+            continue
+        if token in {"-r", "--requirement", "-c", "--constraint"}:
+            skip_next = True
+            continue
+        if token.startswith("-"):
+            continue
+        targets.append(token)
+    if editable:
+        return True
+    return any(
+        target in {".", "./"}
+        or target.startswith(("./", "/", "file:"))
+        for target in targets
+    )
+
+
+def _with_no_build_isolation_for_local_install(argv: list[str]) -> list[str]:
+    """Local setup.py often `import torch`; pip isolation hides the venv torch pin."""
+    if "--no-build-isolation" in argv:
+        return argv
+    if not _is_local_project_install(argv):
+        return argv
+    out = list(argv)
+    out.insert(out.index("install") + 1, "--no-build-isolation")
+    return out
 
 
 def _run_argv(
@@ -126,6 +183,25 @@ def _baseline_packages(python: Path) -> list[list[str]]:
     ]
 
 
+def _is_requirements_install(argv: list[str]) -> bool:
+    args = _pip_install_args(argv)
+    if args is None:
+        return False
+    return "-r" in args or "--requirement" in args
+
+
+def _run_torch_pin(python: Path, repo: Path, scratch: Path) -> dict:
+    spec = detect_torch_spec()
+    argv = spec.pip_install_argv(str(python))
+    ran = _run_argv(
+        argv,
+        cwd=repo,
+        timeout=_INSTALL_TIMEOUT,
+        scratch_home=scratch,
+    )
+    return {"step": f"reapply-torch-pin {spec.torch_pin}|{spec.cuda_tag}", "argv": argv, **ran}
+
+
 def install_venv(slug: str, install_steps: list[str] | None = None) -> dict:
     try:
         require_slug(slug)
@@ -167,6 +243,11 @@ def install_venv(slug: str, install_steps: list[str] | None = None) -> dict:
 
         results: list[dict] = []
         for step, argv, extra in parsed_steps:
+            if _is_local_project_install(argv):
+                pin_ran = _run_torch_pin(py, repo, scratch)
+                results.append(pin_ran)
+                if not pin_ran["ok"]:
+                    return {"status": "error", "stage": "install", "results": results}
             ran = _run_argv(
                 argv,
                 cwd=repo,
@@ -177,6 +258,11 @@ def install_venv(slug: str, install_steps: list[str] | None = None) -> dict:
             results.append({"step": step, **ran})
             if not ran["ok"]:
                 return {"status": "error", "stage": "install", "results": results}
+            if _is_requirements_install(argv):
+                pin_ran = _run_torch_pin(py, repo, scratch)
+                results.append(pin_ran)
+                if not pin_ran["ok"]:
+                    return {"status": "error", "stage": "install", "results": results}
         return {
             "status": "ok",
             "python": str(py),

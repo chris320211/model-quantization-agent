@@ -180,7 +180,7 @@ def adapter_loads_hub_id(source: str) -> bool:
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
             name = _func_name(node.func)
-            if name in {"eval", "exec"}:
+            if isinstance(node.func, ast.Name) and node.func.id in {"eval", "exec"}:
                 return True
             is_load = name in _LOAD_FUNC_NAMES or (
                 name is not None and name.startswith("AutoModel")

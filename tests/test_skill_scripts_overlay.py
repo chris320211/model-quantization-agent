@@ -112,6 +112,18 @@ def test_adapter_loads_hub_id_false_when_loading_model_path():
     ) is False
 
 
+def test_adapter_loads_hub_id_allows_model_eval():
+    source = (
+        "QUANT_AGENT_ADAPTER_API = 1\n"
+        "def load_model_and_tokenizer(*, model_path, model_id, dtype, device, trust_remote_code):\n"
+        "    model = AutoModelForCausalLM.from_pretrained(model_path)\n"
+        "    model.eval()\n"
+        "    return model, None\n"
+    )
+    assert adapter_loads_hub_id(source) is False
+    validate_adapter_source(source)
+
+
 def test_adapter_loads_hub_id_catches_literals_aliases_and_kwargs():
     assert adapter_loads_hub_id(
         "QUANT_AGENT_ADAPTER_API = 1\n"

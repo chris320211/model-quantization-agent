@@ -16,6 +16,8 @@ VENV_ROOT = REPO_ROOT / ".venvs"
 JOBS_ROOT = REPO_ROOT / "jobs"
 PAPER_CACHE = REPO_ROOT / ".cache" / "papers"
 HF_SNAP_ROOT = REPO_ROOT / ".cache" / "hf-snapshots"
+EVAL_CACHE = REPO_ROOT / ".cache" / "eval"
+COMPARE_ROOT = REPO_ROOT / "compare"
 
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,79}$")
 
@@ -33,8 +35,16 @@ def contained_in(path: Path, root: Path) -> bool:
 
 
 def venv_python(slug: str) -> Path:
+    """Return ``.venvs/<slug>/bin/python`` without following the interpreter symlink.
+
+    A normal venv's ``bin/python`` points at the system interpreter (e.g.
+    ``/usr/bin/python3.10``). Resolving that symlink and then requiring the
+    target to live under ``.venvs`` treats every real venv as a path escape.
+    Containment is on the venv directory; the returned path is the in-venv
+    ``bin/python`` entry (still a symlink).
+    """
     require_slug(slug)
-    py = (VENV_ROOT / slug / "bin" / "python").resolve()
-    if not contained_in(py, VENV_ROOT):
-        raise ValueError(f"venv python escaped .venvs: {py}")
-    return py
+    venv_dir = (VENV_ROOT / slug).expanduser().resolve()
+    if not contained_in(venv_dir, VENV_ROOT):
+        raise ValueError(f"venv python escaped .venvs: {venv_dir}")
+    return venv_dir / "bin" / "python"

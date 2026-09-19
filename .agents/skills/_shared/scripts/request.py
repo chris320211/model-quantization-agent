@@ -47,6 +47,11 @@ OPTIONAL = (
     "winner_overlay_dir",
     "winner_script",
     "ranked",
+    "tried_overlays",
+    "retry_gpu_jobs_used",
+    "retry_gpu_jobs_max",
+    "last_job_id",
+    "last_diagnose_path",
 )
 
 ALLOWED_KEYS = frozenset(REQUIRED + OPTIONAL)
@@ -87,6 +92,34 @@ def load_request(path: Path) -> dict:
     return _validate(data)
 
 
+def record_retry(
+    path: Path,
+    *,
+    tried_overlay: str | None = None,
+    last_job_id: str | None = None,
+    last_diagnose_path: str | None = None,
+    increment_used: bool = True,
+) -> dict:
+    """Append a tried overlay and count one parent retry GPU job."""
+    data = load_request(path)
+    tried = [str(item) for item in (data.get("tried_overlays") or [])]
+    if tried_overlay:
+        marker = str(tried_overlay).rstrip("/")
+        if marker not in tried and f"{marker}/" not in tried:
+            tried.append(marker)
+    data["tried_overlays"] = tried
+    if increment_used:
+        data["retry_gpu_jobs_used"] = int(data.get("retry_gpu_jobs_used") or 0) + 1
+    if data.get("retry_gpu_jobs_max") in (None, ""):
+        data["retry_gpu_jobs_max"] = 2
+    if last_job_id:
+        data["last_job_id"] = str(last_job_id)
+    if last_diagnose_path:
+        data["last_diagnose_path"] = str(last_diagnose_path)
+    write_request(data)
+    return load_request(path)
+
+
 def write_request(payload: dict) -> Path:
     if not isinstance(payload, dict):
         raise ValueError("request JSON must be an object")
@@ -99,6 +132,9 @@ def write_request(payload: dict) -> Path:
     require_slug(str(slug))
     filtered = {key: payload[key] for key in ALLOWED_KEYS if key in payload}
     filtered["slug"] = slug
+    filtered.setdefault("retry_gpu_jobs_used", 0)
+    filtered.setdefault("retry_gpu_jobs_max", 2)
+    filtered.setdefault("tried_overlays", [])
     _validate(filtered)
     path = request_path(slug)
     atomic_write_text(path, json.dumps(filtered, indent=2, sort_keys=True) + "\n")
@@ -109,10 +145,25 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Read or write a gather request JSON")
     parser.add_argument("path", nargs="?", type=Path)
     parser.add_argument("--write-json", help="JSON object to write")
+    parser.add_argument("--record-retry", action="store_true")
+    parser.add_argument("--tried-overlay")
+    parser.add_argument("--last-job-id")
+    parser.add_argument("--last-diagnose-path")
     args = parser.parse_args()
     if args.write_json:
         path = write_request(json.loads(args.write_json))
         print(path)
+        return 0
+    if args.record_retry:
+        if args.path is None:
+            raise SystemExit("path required")
+        payload = record_retry(
+            args.path,
+            tried_overlay=args.tried_overlay,
+            last_job_id=args.last_job_id,
+            last_diagnose_path=args.last_diagnose_path,
+        )
+        print(json.dumps(payload, indent=2))
         return 0
     if args.path is None:
         raise SystemExit("path required")

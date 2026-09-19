@@ -1,9 +1,17 @@
-"""Detect the right torch build for the local GPU.
+"""Detect the right torch build for the local GPU and CUDA toolkit.
 
-Ampere/Ada (sm_80–sm_89, e.g. A10G/A100/L40S/L4) → torch 2.3.1 cu121.
-Hopper+ (sm_90+, H100/H200/B200) → torch 2.4.1 cu124 (where FlashAttention 2 and
-FP8 kernels expect cu124-era runtimes).
-Unknown or no GPU → default to the Ampere pin so laptop dry runs still work.
+Extension builds compare nvcc's CUDA version to ``torch.version.cuda``. Driver
+CUDA (nvidia-smi) is not enough: a 12.8 toolkit with a cu130 wheel fails.
+
+Match **nvcc / CUDA toolkit** first, then GPU arch as a fallback for hosts
+without a toolkit (laptop dry runs).
+
+Known toolkit pins (wheels on download.pytorch.org):
+
+- CUDA 12.1/12.2 → torch 2.3.1 cu121
+- CUDA 12.4 → torch 2.4.1 cu124 (Hopper default when nvcc is 12.4)
+- CUDA 12.6 → torch 2.7.1 cu126
+- CUDA 12.8 → torch 2.7.1 cu128
 
 Override via env var ``QUANT_AGENT_TORCH_SPEC`` (format: ``torch==X.Y.Z|cuZZZ``)
 so users can pin exotic combinations without editing the code.
@@ -15,10 +23,6 @@ import re
 import shutil
 import subprocess
 from dataclasses import dataclass
-
-
-_DEFAULT_SPEC: "TorchSpec"  # forward declared below
-_HOPPER_SPEC: "TorchSpec"
 
 
 @dataclass(frozen=True)
@@ -40,6 +44,17 @@ class TorchSpec:
 
 _DEFAULT_SPEC = TorchSpec(torch_pin="torch==2.3.1", cuda_tag="cu121")
 _HOPPER_SPEC = TorchSpec(torch_pin="torch==2.4.1", cuda_tag="cu124")
+
+# Exact nvcc major.minor → wheel. Unknown minors round down within the same major.
+_TOOLKIT_SPECS: dict[tuple[int, int], TorchSpec] = {
+    (12, 1): TorchSpec(torch_pin="torch==2.3.1", cuda_tag="cu121"),
+    (12, 2): TorchSpec(torch_pin="torch==2.3.1", cuda_tag="cu121"),
+    (12, 4): TorchSpec(torch_pin="torch==2.4.1", cuda_tag="cu124"),
+    (12, 6): TorchSpec(torch_pin="torch==2.7.1", cuda_tag="cu126"),
+    (12, 8): TorchSpec(torch_pin="torch==2.7.1", cuda_tag="cu128"),
+}
+
+_NVCC_RELEASE_RE = re.compile(r"release\s+(\d+)\.(\d+)")
 
 
 def _parse_override(raw: str) -> TorchSpec | None:
@@ -78,12 +93,48 @@ def _compute_capability() -> float | None:
         return None
 
 
+def _nvcc_release() -> tuple[int, int] | None:
+    nvcc = shutil.which("nvcc")
+    if not nvcc:
+        return None
+    try:
+        r = subprocess.run(
+            [nvcc, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+    except (subprocess.SubprocessError, FileNotFoundError):
+        return None
+    match = _NVCC_RELEASE_RE.search(r.stdout or "")
+    if not match:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
+def spec_for_toolkit(major: int, minor: int) -> TorchSpec | None:
+    exact = _TOOLKIT_SPECS.get((major, minor))
+    if exact is not None:
+        return exact
+    known = sorted(k for k in _TOOLKIT_SPECS if k[0] == major and k <= (major, minor))
+    if known:
+        return _TOOLKIT_SPECS[known[-1]]
+    return None
+
+
 def detect_torch_spec() -> TorchSpec:
     override_raw = os.environ.get("QUANT_AGENT_TORCH_SPEC", "").strip()
     if override_raw:
         parsed = _parse_override(override_raw)
         if parsed is not None:
             return parsed
+
+    toolkit = _nvcc_release()
+    if toolkit is not None:
+        matched = spec_for_toolkit(*toolkit)
+        if matched is not None:
+            return matched
 
     cc = _compute_capability()
     if cc is not None and cc >= 9.0:

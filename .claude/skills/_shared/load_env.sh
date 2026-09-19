@@ -2,10 +2,7 @@
 # Strictly parse model-quantization-agent credentials into the current shell.
 #
 # Usage:
-#   source /home/ubuntu/model-quantization-agent/.claude/skills/_shared/load_env.sh
-#
-# Or with an explicit path:
-#   source .../_shared/load_env.sh /path/to/.env
+#   source .agents/skills/_shared/load_env.sh .env
 #
 # Behavior:
 #   - Refuses a world-readable credential file (mode != 600); auto-tightens to 600.
@@ -16,12 +13,12 @@
 #   - Returns non-zero on missing file so callers can `|| { ...; exit 1; }`.
 
 _quant_load_env() {
-  local env_file="${1:-${QUANT_AGENT_ENV:-/home/ubuntu/model-quantization-agent/.env}}"
+  local env_file="${1:-${QUANT_AGENT_ENV:-.env}}"
 
   if [[ ! -f "$env_file" ]]; then
     echo "[env] $env_file not found." >&2
-    echo "[env] Run \`quant-agent setup\` (hidden input via getpass, writes mode 600)" >&2
-    echo "[env] or invoke the /quant-setup skill for guided setup." >&2
+    echo "[env] Create a mode-600 .env yourself, or export HF_TOKEN in this shell." >&2
+    echo "[env] Use the quant-setup skill for guided setup. Never paste tokens in chat." >&2
     return 1
   fi
 
@@ -52,7 +49,7 @@ _quant_load_env() {
     key="${BASH_REMATCH[1]}"
     value="${BASH_REMATCH[2]}"
     case "$key" in
-      OPENAI_API_KEY|GITHUB_TOKEN|HUGGINGFACE_HUB_TOKEN|HF_TOKEN|QUANT_AGENT_MODEL|QUANT_AGENT_REASONING_EFFORT|QUANT_AGENT_*_MODEL|QUANT_AGENT_*_REASONING_EFFORT|QUANT_AGENT_TORCH_SPEC)
+      GITHUB_TOKEN|HUGGINGFACE_HUB_TOKEN|HF_TOKEN|QUANT_AGENT_WORKSPACE|QUANT_AGENT_TORCH_SPEC|OPENAI_API_KEY)
         export "$key=$value"
         loaded_keys+="$key "
         ;;

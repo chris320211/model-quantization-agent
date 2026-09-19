@@ -1,35 +1,27 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "quant-agent"
-version = "0.1.0"
-description = "LangChain agent that recommends and generates quantization scripts for HuggingFace LLMs"
+version = "0.2.0"
+description = "Skills-first autonomous quantization porting for Hugging Face LLMs"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "langchain>=0.3",
-    "langchain-openai>=1.3",
-    "langgraph>=0.2",
     "huggingface_hub>=0.25",
-    "arxiv>=2.1",
     "pypdf>=4.0",
     "pyyaml>=6",
     "requests>=2.31",
-    "python-dotenv>=1",
     "pydantic>=2.10,<3",
-    "typer>=0.12",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8,<10", "build>=1.2"]
+dev = ["pytest>=8,<10"]
 
-[project.scripts]
-quant-agent = "quant_agent.cli:app"
+[tool.setuptools]
+packages = []
 
-[tool.setuptools.packages.find]
-where = ["src"]
-
-[tool.setuptools.package-data]
-quant_agent = ["data/*.yaml"]
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

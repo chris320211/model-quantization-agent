@@ -36,6 +36,8 @@ _SKIP_FILES = {
     "flatquant_runtime.pt",
 }
 _SKIP_SUFFIXES = {".metadata"}
+_WEIGHT_SUFFIXES = {".pt", ".pth", ".bin", ".safetensors"}
+_STAGE_SUFFIXES = _WEIGHT_SUFFIXES | {".json", ".py"}
 _COPY_NAMES = {
     "config.json",
     "configuration_phi3.py",
@@ -46,6 +48,8 @@ _COPY_NAMES = {
     "tokenizer_config.json",
     "special_tokens_map.json",
     "added_tokens.json",
+    "merges.txt",
+    "vocab.json",
     "quantization_config.json",
     "flatquant_args.json",
     "LICENSE",
@@ -167,6 +171,7 @@ def stage_hub_bundle(
     dest.mkdir(parents=True, exist_ok=True)
 
     copied: list[str] = []
+    large_weights: list[Path] = []
     for path in output_dir.iterdir():
         if path.name in _SKIP_DIRS or path.name in _SKIP_FILES:
             continue
@@ -174,11 +179,12 @@ def stage_hub_bundle(
             continue
         if path.is_dir():
             continue
-        if path.name not in _COPY_NAMES and path.suffix.lower() not in {".pt", ".pth", ".json", ".py"}:
+        if path.name not in _COPY_NAMES and path.suffix.lower() not in _STAGE_SUFFIXES:
             continue
         target = dest / path.name
         if path.stat().st_size > 64 * 1024 * 1024:
             # Point at the original large weight file instead of duplicating it.
+            large_weights.append(path)
             copied.append(path.name)
             continue
         shutil.copy2(path, target)
@@ -216,13 +222,17 @@ def stage_hub_bundle(
     }
     atomic_write_text(dest / "metrics.json", json.dumps(metrics, indent=2) + "\n", mode=0o644)
     packed = output_dir / "packed_w4a4.pt"
-    weight_src = str(packed) if packed.is_file() else None
+    if packed.is_file() and packed.resolve() not in {path.resolve() for path in large_weights}:
+        large_weights.append(packed)
+    weight_srcs = [str(path.resolve()) for path in large_weights]
+    weight_src = weight_srcs[0] if weight_srcs else None
     manifest = {
         "status": "staged",
         "job_id": job_id,
         "stage_dir": str(dest.resolve()),
         "output_dir": str(output_dir.resolve()),
         "weight_src": weight_src,
+        "weight_srcs": weight_srcs,
         "repo_id": repo_id,
         "copied": sorted(set(copied)),
         "uploaded": False,
@@ -254,8 +264,15 @@ def upload_hub_bundle(manifest: dict, repo_id: str) -> dict:
             repo_type="model",
             ignore_patterns=["hub_manifest.json"],
         )
-        weight_src = manifest.get("weight_src")
-        if weight_src and Path(weight_src).is_file():
+        seen: set[str] = set()
+        extra = list(manifest.get("weight_srcs") or [])
+        if manifest.get("weight_src"):
+            extra.insert(0, str(manifest["weight_src"]))
+        for weight_src in extra:
+            resolved = str(Path(weight_src).resolve())
+            if resolved in seen or not Path(weight_src).is_file():
+                continue
+            seen.add(resolved)
             api.upload_file(
                 path_or_fileobj=weight_src,
                 path_in_repo=Path(weight_src).name,

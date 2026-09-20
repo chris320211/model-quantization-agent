@@ -48,10 +48,28 @@ does not spawn three new authors.
 ## Worker
 
 If it has `strategy: diagnose_fix`, you are a **bounded fix worker** (not a
-fourth random port style). Read `jobs/<job_id>/diagnose.json`. Author one overlay
-that addresses those **typed** `issue:` codes (for example keep-runtime save
-for `transform_or_runtime_dropped_on_save`). Do not retune from raw PPL. Validate
-only; do not launch a GPU job. Same worker for every method × model × GPU.
+fourth random port style). Read `jobs/<job_id>/diagnose.json` **and** the
+parent job stderr (`$S/jobs.py logs <job_id> -n 80`). Author one overlay that
+fixes **that** failure:
+
+1. Start from `error_excerpt` and `notes` (the last traceback / verify error).
+   Infer the concrete patch (missing `flash_attn` → SDPA/eager; CPU vs CUDA →
+   `.to(weight.device)` on scales/RoPE; `sym_quant` fp16 assert → cast scales
+   after pack **and** load). Typed `issue_codes` name the class of bug;
+   the excerpt is what to change.
+2. Also honor `prior_issue_codes` so you do not reintroduce a bug already
+   classified on this slug (keep packed path, keep eval flags, keep fp16
+   kernel scales if those codes already appeared).
+3. If diagnose JSON has `best_overlay_dir`, start the patch from **that**
+   overlay, not a last job that regressed. If `packed_quality_gap`, do not
+   restore eval flags again. If the cloned repo has a weight-only or
+   fp16-activation class versus an activation-quant class, try that official
+   path on packed weights. If this family has tensors the repo's default
+   Llama path skips (bias, tied embeddings, GQA), apply the same rotate/fuse
+   the repo uses for those.
+4. Do not retune from raw PPL. Do not write a generic packed overlay that
+   ignores the traceback. Validate only; do not launch a GPU job. Same worker
+   for every method × model × GPU.
 
 Do only your `strategy`. Read the request JSON, paper, and `.venvs/<slug>/repo`
 (read-only). Author a unified diff and a wrapper script.

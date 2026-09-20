@@ -543,3 +543,97 @@ def test_classify_packed_dtype_still_fixes_when_quality_budget_exhausted(tmp_pat
     assert report["recommended_action"] == diagnose_mod.ACTION_AUTHOR_FIX
     assert report["retry"]["remaining"] == 0
 
+
+def test_error_excerpt_prefers_traceback_and_strips_secret_lines():
+    stderr = (
+        "noise\n"
+        "HF_TOKEN=should-not-appear\n"
+        "Traceback (most recent call last):\n"
+        "  File \"pack.py\", line 1, in <module>\n"
+        "RuntimeError: Expected all tensors to be on the same device, "
+        "but found at least two devices, cpu and cuda:0!\n"
+    )
+    text = diagnose_mod.error_excerpt(
+        stderr=stderr,
+        verification_error="assert scale_row.dtype == torch.float16",
+    )
+    assert "Traceback (most recent call last):" in text
+    assert "cpu and cuda:0" in text
+    assert "assert scale_row.dtype" in text
+    assert "should-not-appear" not in text
+
+
+def test_error_fix_notes_from_flash_attn_and_device_mismatch():
+    flash = diagnose_mod.error_fix_notes(
+        'ImportError: FlashAttention2 has been toggled on, but flash_attn is not installed'
+    )
+    assert any("flash_attn" in note.lower() or "sdpa" in note.lower() for note in flash)
+    device = diagnose_mod.error_fix_notes(
+        "RuntimeError: Expected all tensors to be on the same device, "
+        "but found at least two devices, cpu and cuda:0!"
+    )
+    assert any("device" in note.lower() for note in device)
+    assert diagnose_mod.error_fix_notes("") == []
+
+
+def test_retry_budget_default_is_fourteen():
+    budget = diagnose_mod.retry_budget({})
+    assert budget["max"] == 14
+    assert budget["remaining"] == 14
+
+
+def test_classify_packed_quality_gap_when_eval_flags_already_restored(tmp_path):
+    overlay = tmp_path / "diagnose_fix" / "best"
+    overlay.mkdir(parents=True)
+    (overlay / "overlay.patch").write_text(
+        "diff --git a/x b/x\n+Linear4bit\n+pack_i4\n+restore_packed_eval_runtime\n"
+        "+_eval_mode\n+use_diag\n+nn.Quantizer()\n"
+        "+scaled_dot_product_attention\n"
+    )
+    report = diagnose_mod.classify(
+        script_signals={
+            "unwraps_to_nn_linear": False,
+            "drops_runtime": False,
+            "keeps_runtime": True,
+            "fuses_transform_into_layernorm": True,
+            "saves_packed_int4": True,
+        },
+        comparison={
+            "ppl_ratio": 2.59,
+            "quality_ok": False,
+            "improved_vram": True,
+            "improved_throughput": False,
+        },
+        checkpoint={"dense_float_only": False, "packed_int4": True},
+        ranked=[],
+        current_overlay=str(overlay),
+        retry_gpu_jobs_used=0,
+        retry_gpu_jobs_max=2,
+        best_overlay_dir=str(overlay),
+        best_ppl_ratio=2.4,
+    )
+    assert diagnose_mod.ISSUE_EVAL_FLAGS not in report["issues"]
+    assert diagnose_mod.ISSUE_PACKED_QUALITY_GAP in report["issues"]
+    assert diagnose_mod.CODE_PACKED_QUALITY_GAP in report["issue_codes"]
+    assert report["root_cause"] == diagnose_mod.ISSUE_PACKED_QUALITY_GAP
+    assert report["recommended_action"] == diagnose_mod.ACTION_AUTHOR_FIX
+    assert any("best_overlay_dir" in note for note in report["notes"])
+    assert any("weight-only" in note or "fp16-activation" in note for note in report["notes"])
+    assert any("regressed" in note for note in report["notes"])
+
+
+def test_maybe_record_best_quality_keeps_lowest_ratio():
+    payload = {}
+    diagnose_mod._maybe_record_best_quality(
+        payload, job_id="job-a", overlay_path="ov/a", ppl_ratio=2.8
+    )
+    diagnose_mod._maybe_record_best_quality(
+        payload, job_id="job-b", overlay_path="ov/b", ppl_ratio=2.4
+    )
+    diagnose_mod._maybe_record_best_quality(
+        payload, job_id="job-c", overlay_path="ov/c", ppl_ratio=2.6
+    )
+    assert payload["best_job_id"] == "job-b"
+    assert payload["best_overlay_dir"] == "ov/b"
+    assert payload["best_ppl_ratio"] == 2.4
+

@@ -75,7 +75,10 @@ Required keys:
 Optional keys gather may add: `instance_type`, `gpu_arch`, `vram_gb`, `gpu`,
 `venv_python`. Port may add `winner_overlay_dir`, `winner_script`, `ranked`.
 The parent retry loop may add `tried_overlays`, `retry_gpu_jobs_used`,
-`retry_gpu_jobs_max` (default 2), `last_job_id`, `last_diagnose_path`.
+`retry_gpu_jobs_max` (default 14), `last_job_id`, `last_diagnose_path`,
+`best_job_id`, `best_overlay_dir`, `best_ppl_ratio` (lowest WikiText-2
+ratio so the next `diagnose_fix` starts from the best overlay, not a
+regression).
 Gather/`request.py` seeds used=0, max=2, and an empty `tried_overlays` list
 for every new slug.
 
@@ -132,19 +135,21 @@ for every new slug.
 Feedback bus is files, not a prose dump of WikiText-2:
 
 - `jobs/<job_id>/benchmark.json` — numbers (`quality_ok`, `ppl_ratio`, VRAM, tok/s)
-- `jobs/<job_id>/diagnose.json` — typed `issue_codes`, `recommended_action`,
-  `next_overlay_dir` / `next_script`, retry budget
+- `jobs/<job_id>/diagnose.json` — typed `issue_codes`, `error_excerpt` (last
+  traceback / verify error), `notes`, `prior_issue_codes`,
+  `recommended_action`, `next_overlay_dir` / `next_script`, retry budget
 
 The parent switches **only** on `recommended_action`. It never pastes raw PPL
-into a port worker. If a `diagnose_fix` overlay is needed, pass `issue:` codes
-plus the diagnose JSON path.
+into a port worker to retune. If a `diagnose_fix` overlay is needed, pass
+`issue:` codes plus the diagnose JSON path; the worker **must** read
+`error_excerpt` and `notes` and patch that failure (not a generic overlay).
 
 Budget (method/model/GPU-agnostic — same numbers for AWQ, FlatQuant, GPTQ, …):
 
 - First winner GPU job does not count.
-- At most **`retry_gpu_jobs_max` (default 2)** extra GPU jobs for the whole
-  request: verify-fail next overlay, `retry_ranked_overlay`, and one
-  `author_fix` overlay followed by one run. Diagnose still fills
+- At most **`retry_gpu_jobs_max` (default 14)** extra GPU jobs for the whole
+  request: verify-fail next overlay, `retry_ranked_overlay`, and
+  `author_fix` overlay followed by run. Diagnose still fills
   `next_overlay_dir` when budget is exhausted so the parent can resume if
   the user extends the budget.
 - After quality is inside the 1.5× WikiText-2 gate, diagnose may still say
@@ -153,7 +158,7 @@ Budget (method/model/GPU-agnostic — same numbers for AWQ, FlatQuant, GPTQ, …
   it, dtype, eval flags, SDPA/flash). Diagnose returns `none` once the overlay
   already uses those, or after two `kernel_triton` overlays. Packed verify
   failures (`cuda_kernel_dtype_mismatch`, `packed_loader_failed`,
-  `eval_runtime_flags_missing`) and `prefill_kernel_missing` may still
+  `eval_runtime_flags_missing`, `packed_quality_gap`) and `prefill_kernel_missing` may still
   recommend a GPU job when `retry.remaining` is 0 (helper overage / kernel
   cap). The parent never inspects overlay text; it only switches on
   `recommended_action`. `kernel_triton` already listed does not stop a packed
@@ -168,7 +173,7 @@ Budget (method/model/GPU-agnostic — same numbers for AWQ, FlatQuant, GPTQ, …
 | `recommended_action` | Parent does |
 | --- | --- |
 | `retry_ranked_overlay` | One `quant-run` on `next_overlay_dir`, then verify + benchmark (benchmark only if verify passed). Record the overlay on `tried_overlays` and increment `retry_gpu_jobs_used`. |
-| `author_fix` | One validate-only `diagnose_fix` overlay (issue codes, not free-form metrics), then one `quant-run` if budget remains. |
+| `author_fix` | One validate-only `diagnose_fix` overlay (issue codes + `error_excerpt`, not raw PPL), then one `quant-run` if budget remains. |
 | `kernel` | `quant-kernel` when diagnose says so. Parent does not inspect the overlay for SDPA. Packed GEMM-only is `prefill_kernel_missing`, not a stop. A packed kernel that failed verify is not a stop. |
 | `none` | Stop. Report the WikiText-2 metric table from `benchmark.json` plus `diagnose.json`. |
 
@@ -186,7 +191,8 @@ Typed issue codes (stable across methods):
 | `loader_arch` | Unpacked artifact will not load as this model (verify). Next ranked overlay. |
 | `cuda_kernel_dtype_mismatch` | Packed CUDA GEMM/dequant asserts fp16 scales. Cast after pack and load; stay packed. |
 | `packed_loader_failed` | Packed artifact failed verify. Stay on packed path; do not retry dense ranked overlays. |
-| `eval_runtime_flags_missing` | Packed/fused load skipped `_eval_mode` / `use_diag=False`; transforms apply twice. |
+| `eval_runtime_flags_missing` | Packed/fused load skipped `_eval_mode` / `use_diag=False`; transforms apply twice. Only if the current overlay does not already restore those flags. |
+| `packed_quality_gap` | Packed, eval flags already restored, WikiText-2 still above 1.5×. Start from `best_overlay_dir`. Try the repo's official weight-only / fp16-activation path if it has one. |
 | `prefill_kernel_missing` | Packed GEMM saved, but WikiText-2 tok/s still uses naive attention / unfused T+quant. |
 | `transform_or_runtime_dropped_on_save` | Method runtime / activation transform stripped on save. |
 | `fakequant_saved_as_dense` | Low-bit values stored as fp16; VRAM cannot beat baseline. |

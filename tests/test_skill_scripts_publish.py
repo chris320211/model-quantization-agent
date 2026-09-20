@@ -57,3 +57,9 @@ def test_upload_requires_org_name_repo_id():
         assert "org/name" in str(exc) or "host" in str(exc).lower()
     else:
         raise AssertionError("expected upload_hub_bundle to reject a bad repo id or missing host flag")
+
+
+def test_stage_suffixes_include_safetensors_and_tokenizer_merges():
+    assert ".safetensors" in publish_mod._STAGE_SUFFIXES
+    assert ".bin" in publish_mod._STAGE_SUFFIXES
+    assert "merges.txt" in publish_mod._COPY_NAMES

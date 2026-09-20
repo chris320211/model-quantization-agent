@@ -12,6 +12,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from io_utils import atomic_write_text
 from paths import REQUESTS_ROOT, require_slug
 
+# Extra GPU jobs after the first winner. Novel-method ports on a new arch
+# typically need overlay switches plus packed dtype/eval-flag fixes.
+RETRY_GPU_JOBS_MAX = 14
+
 _SLUGIFY_RE = re.compile(r"[^a-z0-9]+")
 _SECRET_KEY_RE = re.compile(
     r"token|secret|password|api[_-]?key|hf_token|openai|github",
@@ -52,6 +56,9 @@ OPTIONAL = (
     "retry_gpu_jobs_max",
     "last_job_id",
     "last_diagnose_path",
+    "best_job_id",
+    "best_overlay_dir",
+    "best_ppl_ratio",
 )
 
 ALLOWED_KEYS = frozenset(REQUIRED + OPTIONAL)
@@ -111,7 +118,7 @@ def record_retry(
     if increment_used:
         data["retry_gpu_jobs_used"] = int(data.get("retry_gpu_jobs_used") or 0) + 1
     if data.get("retry_gpu_jobs_max") in (None, ""):
-        data["retry_gpu_jobs_max"] = 2
+        data["retry_gpu_jobs_max"] = RETRY_GPU_JOBS_MAX
     if last_job_id:
         data["last_job_id"] = str(last_job_id)
     if last_diagnose_path:
@@ -133,7 +140,7 @@ def write_request(payload: dict) -> Path:
     filtered = {key: payload[key] for key in ALLOWED_KEYS if key in payload}
     filtered["slug"] = slug
     filtered.setdefault("retry_gpu_jobs_used", 0)
-    filtered.setdefault("retry_gpu_jobs_max", 2)
+    filtered.setdefault("retry_gpu_jobs_max", RETRY_GPU_JOBS_MAX)
     filtered.setdefault("tried_overlays", [])
     _validate(filtered)
     path = request_path(slug)

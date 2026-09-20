@@ -22,7 +22,10 @@ this GPU type. Do not ask the parent mid-stage. If `HF_TOKEN` is unset and
 
 ## Do
 
-1. Profile hot Python/CUDA ops from the completed job logs (do not edit the clone).
+1. Profile hot Python/CUDA ops from the completed job logs **and**
+   `jobs/<job_id>/diagnose.json` `error_excerpt` / `notes` (do not edit the clone).
+   The kernel overlay must also fix that traceback if verify/process failed
+   with a packed dtype or loader error.
 2. Reread the paper (`paper_path`) and repo for what the method is supposed to do,
    plus `gpu_arch` from the request JSON.
 3. Rewrite those ops to **Triton** (small CUDA only if Triton cannot express the

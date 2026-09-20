@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "model_id": "Qwen/Qwen2.5-1.5B-Instruct",
+  "gpu_instance": "g5.2xlarge",
+  "gpu_name": "NVIDIA A10G",
+  "fp16_baseline": {
+    "perplexity": 9.579097742215955,
+    "tokens_per_s": 11103.0979287014,
+    "peak_vram_gb": 5.843621730804443
+  },
+  "methods": [
+    {
+      "method_name": "SmoothQuant",
+      "slug": "smoothquant-qwen25-15b-g52xlarge",
+      "job_id": "20260920T220639Z-9e4555",
+      "quality_ok": true,
+      "ppl": 10.06685982731535,
+      "ppl_ratio": 1.0509194183236885,
+      "tokens_per_s": 10427.536409381619,
+      "peak_vram_gb": 4.682347774505615,
+      "improved_throughput": false,
+      "improved_vram": true,
+      "packed": true,
+      "artifact_dir": "quantized/smoothquant-qwen25-15b-g52xlarge",
+      "hub_url": "https://huggingface.co/chris320211/smoothquant-qwen25-15b-g52xlarge",
+      "arxiv_id": "2211.10438",
+      "paper_url": "https://arxiv.org/abs/2211.10438",
+      "repo_url": "https://github.com/mit-han-lab/smoothquant",
+      "repo_commit": "c61476d728e42ae0d8a35e7e78494edcac3237b5",
+      "verification_status": "passed",
+      "rank": 1
+    },
+    {
+      "method_name": "QuaRot",
+      "slug": "quarot-qwen25-15b-g52xlarge",
+      "job_id": "20260920T211203Z-4575fe",
+      "quality_ok": false,
+      "ppl": 15.159791953282856,
+      "ppl_ratio": 1.5825907993894115,
+      "tokens_per_s": 3600.7927261982077,
+      "peak_vram_gb": 4.404787540435791,
+      "improved_throughput": false,
+      "improved_vram": true,
+      "packed": false,
+      "artifact_dir": "quantized/quarot-qwen25-15b-g52xlarge",
+      "hub_url": null,
+      "arxiv_id": "2404.00456",
+      "paper_url": "https://arxiv.org/abs/2404.00456",
+      "repo_url": "https://github.com/spcl/QuaRot",
+      "repo_commit": "5008669b08c1f11f9b64d52d16fddd47ca754c5a",
+      "verification_status": "passed",
+      "rank": 2
+    }
+  ],
+  "best": {
+    "method_name": "SmoothQuant",
+    "slug": "smoothquant-qwen25-15b-g52xlarge",
+    "job_id": "20260920T220639Z-9e4555",
+    "rank": 1,
+    "why": "quality_ok, then higher WikiText-2 tok/s, then lower peak VRAM, prefer packed, then lower ppl_ratio",
+    "artifact_dir": "quantized/smoothquant-qwen25-15b-g52xlarge",
+    "hub_url": "https://huggingface.co/chris320211/smoothquant-qwen25-15b-g52xlarge"
+  }
+}

@@ -26,7 +26,7 @@ Then launch **one subagent per stage**, in order. Do not do stage work yourself.
 
 ## Order
 
-1. Gather → `out/requests/<slug>.json` (seeds `retry_gpu_jobs_max=2`, `used=0`)
+1. Gather → `out/requests/<slug>.json` (seeds `retry_gpu_jobs_max=14`, `used=0`)
 2. Port → ranked overlays under `out/overlays/<slug>/<strategy>/`
 3. Run → `job_id` (winner overlay only)
 4. Verify → saved artifact must generate (not Hub fp16)
@@ -59,8 +59,11 @@ verify failed). After **every** passed benchmark launch `quant-diagnose` even
 when `quality_ok` and `efficiency_improved` are already true, so stop is
 file-driven (`recommended_action: none`). Then execute **only**
 `recommended_action` from `jobs/<job_id>/diagnose.json`. Never inspect overlay
-text for SDPA/`kron_matmul`. Never paste raw PPL, logs, or a narrative into
-port/run workers.
+text for SDPA/`kron_matmul`. Never paste WikiText-2 PPL tables or retune from
+raw PPL. Always pass `diagnose.json` and `parent_job_id`. Port/run workers
+**must** read `error_excerpt`, `notes`, `issue_codes`, and the parent job
+stderr, and patch **that** traceback. Typed codes alone are not a fix if the
+excerpt names a concrete exception (missing `flash_attn`, CPU vs CUDA, …).
 
 ```text
 job = winner run
@@ -88,11 +91,12 @@ HANDLE:
   goto LOOP
 ```
 
-Budget: `retry_gpu_jobs_max` default **2** extra GPU jobs after the first
+Budget: `retry_gpu_jobs_max` default **14** extra GPU jobs after the first
 winner for **quality** retries (ranked overlay, `author_fix` for dropped
 runtime / exploded PPL). Diagnose may still recommend packed-path GPU work
 when `remaining` is 0 (`cuda_kernel_dtype_mismatch`, `packed_loader_failed`,
-`eval_runtime_flags_missing`, `prefill_kernel_missing`, first packed kernel):
+`eval_runtime_flags_missing`, `packed_quality_gap`, `prefill_kernel_missing`,
+first packed kernel):
 at most **two** jobs past max for packed verify/eval-flag fixes, and at most
 **two** `kernel_triton` overlays (complete pack overlay + one prefill
 follow-up if the first missed SDPA/flash). You do **not** raise the budget
@@ -107,8 +111,8 @@ A second kernel is only for `prefill_kernel_missing`.
 
 | action | You launch |
 | --- | --- |
-| `retry_ranked_overlay` | `quant-run` with `next_overlay_dir` / `next_script`, `parent_job_id`, `issue:` from `issue_codes`. Then verify; benchmark only if verify passed. |
-| `author_fix` | One port-style worker `strategy: diagnose_fix` with `issue:` codes and `diagnose.json` path (validate only). Then one `quant-run` if diagnose still wants a GPU job. |
+| `retry_ranked_overlay` | `quant-run` with `next_overlay_dir` / `next_script`, `parent_job_id`, `issue:` from `issue_codes`, and `diagnose_json` (worker reads `error_excerpt`). Then verify; benchmark only if verify passed. |
+| `author_fix` | One port-style worker `strategy: diagnose_fix` with `issue:` codes, `diagnose.json` (`error_excerpt` + `notes` + `prior_issue_codes`), and parent job stderr (validate only). Then one `quant-run` if diagnose still wants a GPU job. |
 | `kernel` | `quant-kernel` only when diagnose says so (quality OK, efficiency not, or `prefill_kernel_missing`). Not a quality retry. |
 | `none` | Stop and report the metric table (Report below). |
 

@@ -84,7 +84,7 @@ def test_skill_docs_have_no_obsolete_codex_paths():
     assert "method-agnostic" in diagnose
     assert "1.5" in diagnose
     gather = (ROOT / "agents" / "skills" / "quant-gather" / "SKILL.md").read_text()
-    assert "retry_gpu_jobs_max=2" in gather
+    assert "retry_gpu_jobs_max=14" in gather
     assert "stop and ask" not in gather
     kernel = (ROOT / "agents" / "skills" / "quant-kernel" / "SKILL.md").read_text()
     assert "pack_i4" in kernel
@@ -93,7 +93,10 @@ def test_skill_docs_have_no_obsolete_codex_paths():
     assert "scaled_dot_product_attention" in kernel or "kron_matmul" in kernel
     assert "0-d tensors" in kernel or "Python float" in kernel
     assert "eval_runtime_flags_missing" in diagnose
+    assert "packed_quality_gap" in diagnose
+    assert "best_overlay_dir" in diagnose
     assert "prefill_kernel_missing" in diagnose
+    assert "error_excerpt" in diagnose
     assert "restore_packed_eval_runtime" in kernel or "use_diag" in kernel
     assert "recommended_action" in parent
     assert "inspect overlay" in parent or "Never inspect overlay" in parent
@@ -101,7 +104,11 @@ def test_skill_docs_have_no_obsolete_codex_paths():
     port = (ROOT / "agents" / "skills" / "quant-port" / "SKILL.md").read_text()
     assert "cast_linear4bit_kernel_dtypes" in port or "float16" in kernel
     assert "quantized_save" in port
+    assert "best_overlay_dir" in port
+    assert "packed_quality_gap" in port
     assert "pack_i4" in contract
+    assert "packed_quality_gap" in contract
+    assert "best_overlay_dir" in contract
     assert "cuda_kernel_dtype_mismatch" in contract
     assert "library/" in contract
     assert "catalog.json" in contract

@@ -42,9 +42,15 @@ Do not ask the parent mid-stage. If `HF_TOKEN` is unset and `.env` exists,
    $S/jobs.py logs <job_id> -n 200
    ```
 
-3. On failure: one new fix per attempt, same method and overlay strategy.
-   Re-validate with `validate_script.py`, then launch again. Bounded retries (3).
-   Do not retry gated-model auth, OOM at the same config, disk full, or wrong GPU.
+3. On failure: read `jobs/<job_id>/stderr.log` (and `diagnose.json`
+   `error_excerpt` / `notes` when the parent passed that path). Infer **one**
+   overlay patch that fixes that traceback, same method and overlay strategy.
+   Examples: FlashAttention2 `ImportError` → SDPA/eager; cuda vs cpu in pack →
+   move scales onto the weight device; missing `quarot._CUDA` → import pack
+   helpers without the FA2 modeling path. Re-validate with
+   `validate_script.py`, then launch again. Bounded retries (3). Do **not**
+   relaunch the same script unchanged. Do not retry gated-model auth, OOM at
+   the same config, disk full, or wrong GPU.
 
 4. Do not rewrite kernels here. Do not start a second GPU job while one is
    running. Do not interpret WikiText-2; that is benchmark + parent diagnose.

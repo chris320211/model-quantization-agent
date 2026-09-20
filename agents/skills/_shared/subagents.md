@@ -53,8 +53,9 @@ When that returns `out/requests/awq-qwen25-05b-g5xlarge.json`, the parent launch
 **port**, then run, then verify, then **always** benchmark, then the **retry
 loop** (diagnose → `recommended_action`) for **that** slug. Same loop if the
 user named a different method, model, or GPU instance. Do not spawn a retry
-skill. Do not paste WikiText-2 numbers into port workers; pass `issue:` codes
-and `jobs/<job_id>/diagnose.json`.
+skill. Do not paste WikiText-2 numbers into port workers to retune. Pass
+`issue:` codes, `jobs/<job_id>/diagnose.json` (`error_excerpt` + `notes`),
+and `parent_job_id`. Workers infer the patch from that traceback.
 
 ## Example (port — three strategies, one GPU winner)
 
@@ -108,6 +109,7 @@ Script: <next_script>
 parent_job_id: <failed_or_unimproved_job_id>
 issue: transform_or_runtime_dropped_on_save
 diagnose_json: jobs/<job_id>/diagnose.json
+# Worker must read error_excerpt + notes in that JSON and the parent stderr.
 Do only run. Return job_id.
 ```
 

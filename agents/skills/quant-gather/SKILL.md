@@ -80,7 +80,7 @@ request JSON / error.
    ```
 
    Include optional GPU fields from `gpu.py` when present.
-   `request.py` seeds `retry_gpu_jobs_used=0`, `retry_gpu_jobs_max=2`, and
+   `request.py` seeds `retry_gpu_jobs_used=0`, `retry_gpu_jobs_max=14`, and
    `tried_overlays=[]` so the parent retry loop works for this slug without
    method-specific JSON.
 

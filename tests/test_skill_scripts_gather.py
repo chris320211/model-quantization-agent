@@ -240,7 +240,7 @@ def test_request_record_retry_updates_budget(tmp_path, monkeypatch):
     path = request_mod.write_request(payload)
     seeded = json.loads(path.read_text())
     assert seeded["retry_gpu_jobs_used"] == 0
-    assert seeded["retry_gpu_jobs_max"] == 2
+    assert seeded["retry_gpu_jobs_max"] == 14
     assert seeded["tried_overlays"] == []
     updated = request_mod.record_retry(
         path,
@@ -249,7 +249,7 @@ def test_request_record_retry_updates_budget(tmp_path, monkeypatch):
         last_diagnose_path="jobs/20260919T000000Z-abc123/diagnose.json",
     )
     assert updated["retry_gpu_jobs_used"] == 1
-    assert updated["retry_gpu_jobs_max"] == 2
+    assert updated["retry_gpu_jobs_max"] == 14
     assert "out/overlays/x/dispatch/bbb" in updated["tried_overlays"]
     assert updated["last_job_id"] == "20260919T000000Z-abc123"
 

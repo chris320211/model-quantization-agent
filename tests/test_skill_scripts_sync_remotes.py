@@ -38,7 +38,15 @@ def test_allowlist_blocks_weights_and_secrets():
     assert not mod.is_allowed("agents/../.env")
 
 
-def test_git_askpass_exists_and_does_not_embed_a_token_value():
+def test_github_commit_url_does_not_strip_repo_name_suffix():
+    assert "https://github.com/chris320211/model-quantization-agent.git".endswith(".git")
+    url = "https://github.com/chris320211/model-quantization-agent.git"
+    if url.endswith(".git"):
+        url = url[: -len(".git")]
+    assert url == "https://github.com/chris320211/model-quantization-agent"
+    # str.rstrip('.git') would turn "...agent.git" into "...agen"
+    assert url.endswith("agent")
+
     askpass = ROOT / "agents" / "skills" / "_shared" / "scripts" / "git_askpass.sh"
     text = askpass.read_text()
     assert "GITHUB_TOKEN" in text

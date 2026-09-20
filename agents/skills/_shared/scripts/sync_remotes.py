@@ -127,7 +127,9 @@ def commit_and_push(*, message: str) -> dict:
         raise RuntimeError(err)
     payload["pushed"] = True
     remote = _git(["git", "remote", "get-url", "origin"])
-    url = (remote.stdout or "").strip().rstrip(".git")
+    url = (remote.stdout or "").strip()
+    if url.endswith(".git"):
+        url = url[: -len(".git")]
     sha = payload["commit"] or (_git(["git", "rev-parse", "HEAD"]).stdout or "").strip()
     if url.startswith("https://github.com/") and sha:
         payload["github"] = f"{url}/commit/{sha}"

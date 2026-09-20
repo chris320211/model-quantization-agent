@@ -15,7 +15,7 @@ value. It does not search, clone, adapt, or run GPU jobs itself.
   the **parent**. Do not spawn a subagent for secrets, Hub upload, the library
   row, or `git push`. `quant-setup` asks for a local `.env` once (copy
   `.env.example`); load it every shell. Never read `.env`. Method comparison is
-  `compare/` (written by `quant-catalog` / `compare.py`, shipped by
+  `library/` (written by `quant-catalog` / `library.py`, shipped by
   `quant-sync`), not a Hub leaderboard and not a subagent.
 - Wait until a subagent returns before starting the next **stage**.
 - **Port is the exception:** the port coordinator launches up to three *named*

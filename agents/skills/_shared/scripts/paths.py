@@ -17,7 +17,7 @@ JOBS_ROOT = REPO_ROOT / "jobs"
 PAPER_CACHE = REPO_ROOT / ".cache" / "papers"
 HF_SNAP_ROOT = REPO_ROOT / ".cache" / "hf-snapshots"
 EVAL_CACHE = REPO_ROOT / ".cache" / "eval"
-COMPARE_ROOT = REPO_ROOT / "compare"
+LIBRARY_ROOT = REPO_ROOT / "library"
 
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,79}$")
 

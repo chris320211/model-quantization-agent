@@ -17,8 +17,8 @@ def _load():
 
 def test_allowlist_accepts_library_and_skills():
     mod = _load()
-    assert mod.is_allowed("compare/catalog.json")
-    assert mod.is_allowed("compare/contributions/foo.json")
+    assert mod.is_allowed("library/catalog.json")
+    assert mod.is_allowed("library/contributions/foo.json")
     assert mod.is_allowed("agents/skills/quant-sync/SKILL.md")
     assert mod.is_allowed("tests/test_skill_assets.py")
     assert mod.is_allowed("README.md")

@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import jobs as jobs_mod
 import overlay as overlay_mod
 import paths
-import compare as compare_mod
+import library as library_mod
 from env import child_env, require_host_execution
 from io_utils import atomic_write_text
 from request import load_request
@@ -306,7 +306,7 @@ def main() -> int:
             hub_url = manifest.get("hub_url")
             if hub_url:
                 try:
-                    compare_mod.record_job(
+                    library_mod.record_job(
                         job_id=args.job_id,
                         request=request,
                         hub_url=str(hub_url),
@@ -314,7 +314,7 @@ def main() -> int:
                 except Exception:
                     pass
                 try:
-                    library = compare_mod.sync_hf_collection()
+                    library = library_mod.sync_hf_collection()
                     manifest["library"] = {
                         "hf_collection_url": library.get("hf_collection_url"),
                         "added": library.get("added"),

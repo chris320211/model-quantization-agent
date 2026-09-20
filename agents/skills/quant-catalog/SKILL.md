@@ -22,11 +22,11 @@ Standard row: **model**, **GPU instance**, **method**, **paper**, **method repo*
 ## Do
 
 ```bash
-$S/compare.py --catalog --job-id <job_id> \
+$S/library.py --catalog --job-id <job_id> \
   --request out/requests/<slug>.json \
   --hub-url https://huggingface.co/<you>/<slug>
-$S/compare.py --rebuild
-$S/compare.py --sync-hf-collection
+$S/library.py --rebuild
+$S/library.py --sync-hf-collection
 ```
 
 `--sync-hf-collection` needs `HF_TOKEN` already loaded. If unset, skip sync.
@@ -34,9 +34,9 @@ $S/compare.py --sync-hf-collection
 Do not edit `catalog.json` by hand. Do not commit weights. Then run
 **quant-sync** in this parent session (GitHub push + Hub collection). Third
 parties without push access PR
-`compare/contributions/<model>__<gpu>__<method>.json`.
+`library/contributions/<model>__<gpu>__<method>.json`.
 
-Docs: `compare/LIBRARY.md`.
+Docs: `library/README.md`.
 
 ## Return
 
@@ -48,5 +48,5 @@ method_name: <method>
 paper_url: https://arxiv.org/abs/<id>
 repo_url: https://github.com/<owner>/<repo>
 hub_url: https://huggingface.co/<you>/<slug>
-contribution: compare/contributions/<file>.json
+contribution: library/contributions/<file>.json
 ```

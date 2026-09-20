@@ -30,10 +30,11 @@ Then launch **one subagent per stage**, in order. Do not do stage work yourself.
 4. Verify → saved artifact must generate (not Hub fp16)
 5. Benchmark → **always** WikiText-2 vs the fp16 snapshot
 6. **Retry loop (you)** until stop (below). Do not spawn a `quant-retry` skill.
-7. Tell the user where weights (`quantized/<slug>`), `jobs/<job_id>/benchmark.json`,
-   `diagnose.json`, and `compare/catalog.json` live. Hugging Face Hub is
-   pullable weights; the library table is `compare/catalog.json` (filter model,
-   method, instance; `is_best` is the pick; `--fetch` prints
+7. Stop report **must** include the WikiText-2 **metric table** from
+   `jobs/<job_id>/benchmark.json` (see Report below). Then paths: weights
+   (`quantized/<slug>`), `diagnose.json`, `library/catalog.json`. Hugging Face
+   Hub is pullable weights; the library table is `library/catalog.json`
+   (filter model, method, instance; `is_best` is the pick; `--fetch` prints
    `huggingface-cli download`).
 8. If verify passed and `quality_ok` **and** VRAM or tok/s beat fp16,
    **quant-publish**, **quant-catalog**, then **quant-sync** in this session
@@ -41,8 +42,8 @@ Then launch **one subagent per stage**, in order. Do not do stage work yourself.
    instance, method, paper, method GitHub, Hugging Face. Sync pushes that
    row to this GitHub remote and refreshes the Hub collection. Do not commit
    weight files. Third parties without push access PR
-   `compare/contributions/<model>__<gpu>__<method>.json`. Docs:
-   `compare/LIBRARY.md`.
+   `library/contributions/<model>__<gpu>__<method>.json`. Docs:
+   `library/README.md`.
 
 ## Retry loop (any inputs)
 
@@ -107,7 +108,7 @@ A second kernel is only for `prefill_kernel_missing`.
 | `retry_ranked_overlay` | `quant-run` with `next_overlay_dir` / `next_script`, `parent_job_id`, `issue:` from `issue_codes`. Then verify; benchmark only if verify passed. |
 | `author_fix` | One port-style worker `strategy: diagnose_fix` with `issue:` codes and `diagnose.json` path (validate only). Then one `quant-run` if diagnose still wants a GPU job. |
 | `kernel` | `quant-kernel` only when diagnose says so (quality OK, efficiency not, or `prefill_kernel_missing`). Not a quality retry. |
-| `none` | Stop and report. |
+| `none` | Stop and report the metric table (Report below). |
 
 After a retry job starts:
 
@@ -147,4 +148,23 @@ launch `quant-diagnose` (no benchmark). Packed CUDA scale asserts stay on
 the packed path; only unpacked `loader_arch` may try the next ranked overlay.
 Then **always** launch `quant-benchmark` after a **passed** verify (do not skip,
 do not replace it with `verify --baseline`). Enter the retry loop above. Kernel
-only if diagnose says `kernel`.
+only if diagnose says `kernel`. When the loop stops, print the Report table.
+
+## Report
+
+Every time a run stops (`recommended_action: none`, or verify/run failed with
+nothing left to try), paste this table from the last `benchmark.json`. Do not
+skip it. Say whether a `kernel_triton` overlay ran.
+
+```markdown
+### WikiText-2 (`<job_id>`)
+
+| | PPL | tok/s | VRAM GB |
+| --- | ---: | ---: | ---: |
+| fp16 | <fp16_ppl> | <fp16_tok/s> | <fp16_vram> |
+| quantized | <ppl> | <tok/s> | <vram> |
+
+quality_ok: <bool> (ppl_ratio <ratio>)
+efficiency: VRAM <delta_gb> / tok/s <delta>
+kernel: <yes, kernel_triton | no>
+```

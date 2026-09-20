@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rebuild the compare library, sync the Hub collection, push allowlisted git paths."""
+"""Rebuild the library, sync the Hub collection, push allowlisted git paths."""
 from __future__ import annotations
 
 import sys
@@ -13,16 +13,16 @@ import os
 import subprocess
 
 from env import host_execution_policy, require_host_execution
-from paths import COMPARE_ROOT, REPO_ROOT, contained_in
+from paths import LIBRARY_ROOT, REPO_ROOT, contained_in
 
-ALLOW_PREFIXES = ("compare/", "agents/", "tests/", ".github/workflows/")
+ALLOW_PREFIXES = ("library/", "agents/", "tests/", ".github/workflows/")
 ALLOW_FILES = ("README.md",)
 BLOCK_PREFIXES = ("quantized/", "jobs/", "out/", ".venvs/", ".cache/")
 BLOCK_NAMES = {".env", ".env.local"}
 ASKPASS = Path(__file__).resolve().parent / "git_askpass.sh"
 _GIT_TIMEOUT = 120
 
-_DEFAULT_MESSAGE = "Sync the compare library to GitHub and Hugging Face."
+_DEFAULT_MESSAGE = "Sync the library to GitHub and Hugging Face."
 
 
 def rel_posix(path: Path) -> str:
@@ -139,18 +139,18 @@ def commit_and_push(*, message: str) -> dict:
 
 
 def sync_remotes(*, push: bool, message: str, skip_hf: bool) -> dict:
-    import compare as compare_mod
+    import library as library_mod
 
     payload: dict = {
         "status": "synced",
-        "rebuild": compare_mod.rebuild_derived(),
+        "rebuild": library_mod.rebuild_derived(),
         "hf_collection": None,
         "github": None,
         "commit": None,
     }
-    library = COMPARE_ROOT / "library.json"
+    library = LIBRARY_ROOT / "library.json"
     if not skip_hf and (os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")):
-        payload["hf_collection"] = compare_mod.sync_hf_collection()
+        payload["hf_collection"] = library_mod.sync_hf_collection()
     elif library.is_file():
         try:
             payload["hf_collection"] = {
@@ -176,7 +176,7 @@ def sync_remotes(*, push: bool, message: str, skip_hf: bool) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Rebuild compare/, sync the Hub collection, optionally git push allowlisted paths"
+        description="Rebuild library/, sync the Hub collection, optionally git push allowlisted paths"
     )
     parser.add_argument("--push", action="store_true", help="Commit allowlisted paths and git push origin HEAD")
     parser.add_argument("--message", default=_DEFAULT_MESSAGE, help="git commit message")

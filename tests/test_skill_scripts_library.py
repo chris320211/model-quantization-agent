@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "agents" / "skills" / "_shared" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-import compare as compare_mod  # noqa: E402
+import library as library_mod  # noqa: E402
 import jobs as jobs_mod  # noqa: E402
 import paths as paths_mod  # noqa: E402
 
@@ -33,10 +33,10 @@ def test_faster_quality_ok_method_wins_over_broken_fast_method():
             "packed": False,
         },
     ]
-    ranked = compare_mod.rank_methods(rows)
+    ranked = library_mod.rank_methods(rows)
     assert ranked[0]["method_name"] == "Solid"
     assert ranked[0]["rank"] == 1
-    best = compare_mod.pick_best(rows)
+    best = library_mod.pick_best(rows)
     assert best is not None
     assert best["method_name"] == "Solid"
 
@@ -60,22 +60,22 @@ def test_same_board_ranks_two_quality_ok_methods_by_tok_s():
             "packed": True,
         },
     ]
-    best = compare_mod.pick_best(rows)
+    best = library_mod.pick_best(rows)
     assert best is not None
     assert best["method_name"] == "FlatQuant"
-    ranked = compare_mod.rank_methods(rows)
+    ranked = library_mod.rank_methods(rows)
     assert [row["method_name"] for row in ranked] == ["FlatQuant", "AWQ"]
 
 
 def test_group_filename_is_model_and_gpu_not_method():
-    name = compare_mod.group_filename(
+    name = library_mod.group_filename(
         "microsoft/Phi-3-mini-4k-instruct", "g5.2xlarge"
     )
     assert "Phi-3-mini-4k-instruct" in name
     assert "g5.2xlarge" in name
     assert "flatquant" not in name.lower()
     assert "awq" not in name.lower()
-    assert compare_mod.group_key("org/model", "g5.xlarge") == "org/model|g5.xlarge"
+    assert library_mod.group_key("org/model", "g5.xlarge") == "org/model|g5.xlarge"
 
 
 def _write_job(tmp_path: Path, job_id: str, *, packed: bool, tps: float, ratio: float) -> Path:
@@ -131,13 +131,13 @@ def _write_job(tmp_path: Path, job_id: str, *, packed: bool, tps: float, ratio: 
 
 def test_record_job_replaces_same_method_and_ranks_two_methods(tmp_path, monkeypatch):
     monkeypatch.setattr(paths_mod, "JOBS_ROOT", tmp_path / "jobs")
-    monkeypatch.setattr(paths_mod, "COMPARE_ROOT", tmp_path / "compare")
+    monkeypatch.setattr(paths_mod, "LIBRARY_ROOT", tmp_path / "library")
     monkeypatch.setattr(paths_mod, "REPO_ROOT", tmp_path)
     job_a = "20260101T000000Z-aaaaaa"
     job_b = "20260101T000000Z-bbbbbb"
     job_c = "20260101T000000Z-cccccc"
     _write_job(tmp_path, job_a, packed=True, tps=3140.0, ratio=1.17)
-    first = compare_mod.record_job(
+    first = library_mod.record_job(
         job_id=job_a,
         request={
             "method_name": "FlatQuant",
@@ -157,7 +157,7 @@ def test_record_job_replaces_same_method_and_ranks_two_methods(tmp_path, monkeyp
     assert first["methods"][0]["repo_url"] == "https://github.com/ruikangliu/FlatQuant"
 
     _write_job(tmp_path, job_b, packed=True, tps=5105.9, ratio=1.17)
-    second = compare_mod.record_job(
+    second = library_mod.record_job(
         job_id=job_b,
         request={
             "method_name": "FlatQuant",
@@ -175,7 +175,7 @@ def test_record_job_replaces_same_method_and_ranks_two_methods(tmp_path, monkeyp
     assert methods["FlatQuant"]["hub_url"].endswith("flatquant-phi3")
 
     _write_job(tmp_path, job_c, packed=True, tps=4000.0, ratio=1.10)
-    third = compare_mod.record_job(
+    third = library_mod.record_job(
         job_id=job_c,
         request={
             "method_name": "AWQ",
@@ -188,42 +188,42 @@ def test_record_job_replaces_same_method_and_ranks_two_methods(tmp_path, monkeyp
     assert names[0] == "FlatQuant"
     assert "AWQ" in names
     assert third["best"]["method_name"] == "FlatQuant"
-    index = json.loads((tmp_path / "compare" / "index.json").read_text())
+    index = json.loads((tmp_path / "library" / "index.json").read_text())
     assert index["groups"][0]["n_methods"] == 2
     assert index["groups"][0]["best_method"] == "FlatQuant"
-    readme = (tmp_path / "compare" / "README.md").read_text()
+    readme = (tmp_path / "library" / "README.md").read_text()
     assert "microsoft/Phi-3-mini-4k-instruct" in readme
     assert "g5.2xlarge" in readme
     assert "**Best:** FlatQuant" in readme
-    catalog = json.loads((tmp_path / "compare" / "catalog.json").read_text())
+    catalog = json.loads((tmp_path / "library" / "catalog.json").read_text())
     assert len(catalog["rows"]) == 2
     by_method = {row["method_name"]: row for row in catalog["rows"]}
     assert by_method["FlatQuant"]["is_best"] is True
     assert by_method["AWQ"]["is_best"] is False
     assert by_method["FlatQuant"]["hub_repo_id"] == "example/flatquant-phi3"
-    matched = compare_mod.query(
+    matched = library_mod.query(
         model_id="microsoft/Phi-3-mini-4k-instruct",
         gpu_instance="g5.2xlarge",
         method_name="awq",
     )
     assert len(matched) == 1
     assert matched[0]["method_name"] == "AWQ"
-    best = compare_mod.query(gpu_instance="g5.2xlarge", best_only=True)
+    best = library_mod.query(gpu_instance="g5.2xlarge", best_only=True)
     assert [row["method_name"] for row in best] == ["FlatQuant"]
-    howto = compare_mod.fetch_howto(by_method["FlatQuant"])
+    howto = library_mod.fetch_howto(by_method["FlatQuant"])
     assert howto["status"] == "ok"
     assert "huggingface-cli download example/flatquant-phi3" in howto["command"]
-    local = compare_mod.fetch_howto({"artifact_dir": "quantized/x"})
+    local = library_mod.fetch_howto({"artifact_dir": "quantized/x"})
     assert local["status"] == "local_only"
 
 
 def test_contribution_json_is_the_pr_unit(tmp_path, monkeypatch):
     monkeypatch.setattr(paths_mod, "JOBS_ROOT", tmp_path / "jobs")
-    monkeypatch.setattr(paths_mod, "COMPARE_ROOT", tmp_path / "compare")
+    monkeypatch.setattr(paths_mod, "LIBRARY_ROOT", tmp_path / "library")
     monkeypatch.setattr(paths_mod, "REPO_ROOT", tmp_path)
     job_id = "20260101T000000Z-dddddd"
     _write_job(tmp_path, job_id, packed=True, tps=5105.9, ratio=1.17)
-    compare_mod.record_job(
+    library_mod.record_job(
         job_id=job_id,
         request={
             "method_name": "FlatQuant",
@@ -255,13 +255,13 @@ def test_contribution_json_is_the_pr_unit(tmp_path, monkeypatch):
     }
     src = tmp_path / "incoming.json"
     src.write_text(json.dumps(contrib) + "\n")
-    dest = compare_mod.accept_contribution(src)
+    dest = library_mod.accept_contribution(src)
     assert dest.name.endswith("AWQ.json")
-    rows = {row["method_name"]: row for row in compare_mod.query()}
+    rows = {row["method_name"]: row for row in library_mod.query()}
     assert set(rows) == {"FlatQuant", "AWQ"}
     assert rows["AWQ"]["hub_repo_id"] == "someone/awq-phi3"
     assert rows["FlatQuant"]["is_best"] is True
-    howto = compare_mod.fetch_howto(rows["AWQ"])
+    howto = library_mod.fetch_howto(rows["AWQ"])
     assert "huggingface-cli download someone/awq-phi3" in howto["command"]
 
 
@@ -282,24 +282,24 @@ def test_validate_contribution_requires_hub_and_quality():
         "arxiv_id": "2306.00978",
         "repo_url": "https://github.com/mit-han-lab/llm-awq",
     }
-    compare_mod.validate_contribution(base)
+    library_mod.validate_contribution(base)
     bad_quality = dict(base, quality_ok=False)
     try:
-        compare_mod.validate_contribution(bad_quality)
+        library_mod.validate_contribution(bad_quality)
     except ValueError as exc:
         assert "quality_ok" in str(exc)
     else:
         raise AssertionError("expected quality_ok rejection")
     missing_hub = dict(base, hub_repo_id=None)
     try:
-        compare_mod.validate_contribution(missing_hub)
+        library_mod.validate_contribution(missing_hub)
     except ValueError as exc:
         assert "hub_repo_id" in str(exc)
     else:
         raise AssertionError("expected hub_repo_id rejection")
     missing_paper = dict(base, arxiv_id=None, paper_url=None)
     try:
-        compare_mod.validate_contribution(missing_paper)
+        library_mod.validate_contribution(missing_paper)
     except ValueError as exc:
         assert "paper" in str(exc)
     else:
@@ -307,21 +307,21 @@ def test_validate_contribution_requires_hub_and_quality():
 
 
 def test_pick_best_none_when_nothing_quality_ok():
-    assert compare_mod.pick_best([{"quality_ok": False, "tokens_per_s": 9}]) is None
+    assert library_mod.pick_best([{"quality_ok": False, "tokens_per_s": 9}]) is None
 
 
-def test_quant_skills_point_at_compare_index():
+def test_quant_skills_point_at_library_index():
     parent = (ROOT / "agents" / "skills" / "quant" / "SKILL.md").read_text()
     bench = (ROOT / "agents" / "skills" / "quant-benchmark" / "SKILL.md").read_text()
     publish = (ROOT / "agents" / "skills" / "quant-publish" / "SKILL.md").read_text()
-    assert "compare/" in parent
+    assert "library/" in parent
     assert "catalog.json" in parent
-    assert "compare/" in bench
+    assert "library/" in bench
     assert "contributions" in parent
     assert "contributions" in publish
     catalog = (ROOT / "agents" / "skills" / "quant-catalog" / "SKILL.md").read_text()
     assert "--catalog" in catalog
-    assert (ROOT / "compare" / "LIBRARY.md").is_file()
+    assert (ROOT / "library" / "README.md").is_file()
     assert "library.json" in publish or "sync-hf-collection" in publish
     sync = (ROOT / "agents" / "skills" / "quant-sync" / "SKILL.md").read_text()
     assert "sync_remotes.py" in sync
@@ -364,24 +364,26 @@ def test_collection_entries_dedupes_and_skips_failed_quality():
             "ppl_ratio": 1.05,
         },
     ]
-    items = compare_mod.collection_entries(rows)
+    items = library_mod.collection_entries(rows)
     assert [item["item_id"] for item in items] == ["a/one", "c/three"]
 
 
 def test_repo_contributions_join_one_library():
-    contrib_dir = ROOT / "compare" / "contributions"
+    contrib_dir = ROOT / "library" / "contributions"
     files = list(contrib_dir.glob("*.json"))
     assert files, "expected at least one contribution JSON in the shared library"
+    assert not (ROOT / "compare").exists()
+    assert not (ROOT / "library" / "LIBRARY.md").is_file()
     for path in files:
-        compare_mod.validate_contribution(json.loads(path.read_text()))
-    rows = compare_mod.query()
+        library_mod.validate_contribution(json.loads(path.read_text()))
+    rows = library_mod.query()
     assert any(row.get("hub_repo_id") for row in rows)
     assert any(row.get("paper_url") and row.get("repo_url") for row in rows)
 
 
 def test_catalog_run_records_standard_links(tmp_path, monkeypatch):
     monkeypatch.setattr(paths_mod, "JOBS_ROOT", tmp_path / "jobs")
-    monkeypatch.setattr(paths_mod, "COMPARE_ROOT", tmp_path / "compare")
+    monkeypatch.setattr(paths_mod, "LIBRARY_ROOT", tmp_path / "library")
     monkeypatch.setattr(paths_mod, "REPO_ROOT", tmp_path)
     job_id = "20260101T000000Z-eeeeee"
     _write_job(tmp_path, job_id, packed=True, tps=5105.9, ratio=1.17)
@@ -395,7 +397,7 @@ def test_catalog_run_records_standard_links(tmp_path, monkeypatch):
         "repo_url": "https://github.com/ruikangliu/FlatQuant",
         "repo_commit": "9d88ffcb7d2c6bda59fb5c44dad36adc101aadb1",
     }
-    result = compare_mod.catalog_run(
+    result = library_mod.catalog_run(
         job_id=job_id,
         request=request,
         hub_url="https://huggingface.co/you/flatquant-phi3",
@@ -403,16 +405,16 @@ def test_catalog_run_records_standard_links(tmp_path, monkeypatch):
     assert result["status"] == "cataloged"
     assert result["paper_url"] == "https://arxiv.org/abs/2410.09426"
     assert result["repo_url"] == "https://github.com/ruikangliu/FlatQuant"
-    row = compare_mod.query(method_name="FlatQuant")[0]
+    row = library_mod.query(method_name="FlatQuant")[0]
     assert row["model_id"] == "microsoft/Phi-3-mini-4k-instruct"
     assert row["gpu_instance"] == "g5.2xlarge"
     assert row["hub_repo_id"] == "you/flatquant-phi3"
-    readme = (tmp_path / "compare" / "README.md").read_text()
+    readme = (tmp_path / "library" / "README.md").read_text()
     assert "arxiv.org/abs/2410.09426" in readme
     assert "github.com/ruikangliu/FlatQuant" in readme
     assert "huggingface.co/you/flatquant-phi3" in readme
     try:
-        compare_mod.catalog_run(job_id=job_id, request=request, hub_url="")
+        library_mod.catalog_run(job_id=job_id, request=request, hub_url="")
     except ValueError as exc:
         assert "hub-url" in str(exc)
     else:

@@ -4,10 +4,10 @@ on:
   push:
     branches: [main]
     paths:
-      - "compare/contributions/**"
-      - "compare/catalog.json"
-      - "compare/library.json"
-      - "agents/skills/_shared/scripts/compare.py"
+      - "library/contributions/**"
+      - "library/catalog.json"
+      - "library/library.json"
+      - "agents/skills/_shared/scripts/library.py"
 
 jobs:
   sync-collection:
@@ -27,4 +27,4 @@ jobs:
             echo "HF_TOKEN secret not set; skip collection sync"
             exit 0
           fi
-          python agents/skills/_shared/scripts/compare.py --sync-hf-collection
+          python agents/skills/_shared/scripts/library.py --sync-hf-collection

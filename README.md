@@ -6,23 +6,23 @@ snapshots onto the box, ports in a reviewable overlay, runs one GPU job,
 verifies the **saved** artifact still generates, and **always** benchmarks LLM
 metrics against the fp16 snapshot.
 
-## Find, compare, fetch
+## Library
 
 **One library.** Each row is model × GPU instance × method, with links to the
 paper, the method GitHub repo, and Hugging Face weights. Details:
-`compare/LIBRARY.md`.
+`library/README.md`.
 
-1. Filter `compare/catalog.json` by `model_id`, `method_name`, `gpu_instance`.
+1. Filter `library/catalog.json` by `model_id`, `method_name`, `gpu_instance`.
 2. Compare WikiText-2 PPL / tok/s / VRAM (`is_best` is the pick).
 3. Open paper / method repo / Hub from the row, or `huggingface-cli download <hub_repo_id>`.
-4. Hub collection URL lives in `compare/library.json`.
+4. Hub collection URL lives in `library/library.json`.
 
 ```bash
 PY=$(command -v python || command -v python3)
 S="$PY agents/skills/_shared/scripts"
-$S/compare.py --model-id microsoft/Phi-3-mini-4k-instruct
-$S/compare.py --model-id microsoft/Phi-3-mini-4k-instruct --gpu-instance g5.2xlarge --best
-$S/compare.py --model-id microsoft/Phi-3-mini-4k-instruct --method FlatQuant --fetch
+$S/library.py --model-id microsoft/Phi-3-mini-4k-instruct
+$S/library.py --model-id microsoft/Phi-3-mini-4k-instruct --gpu-instance g5.2xlarge --best
+$S/library.py --model-id microsoft/Phi-3-mini-4k-instruct --method FlatQuant --fetch
 ```
 
 `--fetch` prints the download command. It does not download.
@@ -41,14 +41,14 @@ After a **beneficial** run (quality_ok and better VRAM or tok/s than fp16):
 ```bash
 PY=$(command -v python || command -v python3)
 S="$PY agents/skills/_shared/scripts"
-$S/compare.py --catalog --job-id <job_id> --request out/requests/<slug>.json \
+$S/library.py --catalog --job-id <job_id> --request out/requests/<slug>.json \
   --hub-url https://huggingface.co/<you>/<slug>
 $S/sync_remotes.py --push --allow-unsafe-host-execution
 ```
 
-Details: `compare/LIBRARY.md`. After sync, the row ranks against other methods
+Details: `library/README.md`. After sync, the row ranks against other methods
 on the same model × instance. Third parties without push access PR
-`compare/contributions/<model>__<gpu>__<method>.json`.
+`library/contributions/<model>__<gpu>__<method>.json`.
 
 ## Agent workflow
 
@@ -80,7 +80,7 @@ Helpers: `agents/skills/_shared/scripts/`. No method catalog inside the agent lo
    is set.
 10. **quant-catalog** — parent only, after a beneficial run. Writes the standard
     library row (model, GPU instance, method, paper, method repo, Hugging Face)
-    into `compare/catalog.json`. See `compare/LIBRARY.md`.
+    into `library/catalog.json`. See `library/README.md`.
 11. **quant-sync** — parent only. Pushes allowlisted library files to GitHub and
     refreshes the one Hugging Face collection. Never commits checkpoints.
 
@@ -118,9 +118,9 @@ PY=$(command -v python || command -v python3)
 "$PY" agents/skills/_shared/scripts/jobs.py status <job_id>
 "$PY" agents/skills/_shared/scripts/jobs.py logs <job_id> -n 200
 "$PY" agents/skills/_shared/scripts/jobs.py kill <job_id>
-"$PY" agents/skills/_shared/scripts/compare.py \
+"$PY" agents/skills/_shared/scripts/library.py \
   --model-id <org/model> --gpu-instance <instance> --best
 ```
 
-State: `jobs/<id>/`. Weights: `quantized/`. Comparison: `compare/`. Clone:
+State: `jobs/<id>/`. Weights: `quantized/`. Library: `library/`. Clone:
 `.venvs/<slug>/repo` (never edited). Workspace override: `QUANT_AGENT_WORKSPACE`.

@@ -38,7 +38,7 @@ REQUIRED_SCRIPTS = (
     "verify.py",
     "diagnose.py",
     "publish.py",
-    "compare.py",
+    "library.py",
     "sync_remotes.py",
 )
 
@@ -59,7 +59,7 @@ def test_skill_docs_have_no_obsolete_codex_paths():
     assert "One stage per subagent" in subagents
     assert "quant-setup" in subagents
     assert "recommended_action" in subagents
-    assert "compare/" in subagents
+    assert "library/" in subagents
     parent = (ROOT / "agents" / "skills" / "quant" / "SKILL.md").read_text()
     assert "quant-catalog" in parent
     assert "quant-sync" in parent
@@ -67,7 +67,7 @@ def test_skill_docs_have_no_obsolete_codex_paths():
     assert "paper_url" in catalog
     assert "repo_url" in catalog
     assert "hub_url" in catalog
-    assert "compare/LIBRARY.md" in catalog
+    assert "library/README.md" in catalog
     sync = (ROOT / "agents" / "skills" / "quant-sync" / "SKILL.md").read_text()
     assert "sync_remotes.py" in sync
     assert "Never commit" in sync or "never stages" in sync
@@ -75,8 +75,11 @@ def test_skill_docs_have_no_obsolete_codex_paths():
     assert "Retry loop (you)" in parent
     assert "quant-retry" in parent
     assert "every method × model × GPU" in parent
-    assert "compare/" in parent
+    assert "library/" in parent
     assert "LOOP:" in parent
+    assert "metric table" in parent
+    assert "kernel_triton" in parent
+    assert "WikiText-2" in parent
     diagnose = (ROOT / "agents" / "skills" / "quant-diagnose" / "SKILL.md").read_text()
     assert "method-agnostic" in diagnose
     assert "1.5" in diagnose
@@ -100,12 +103,12 @@ def test_skill_docs_have_no_obsolete_codex_paths():
     assert "quantized_save" in port
     assert "pack_i4" in contract
     assert "cuda_kernel_dtype_mismatch" in contract
-    assert "compare/" in contract
+    assert "library/" in contract
     assert "catalog.json" in contract
     assert "contributions" in contract
     assert "model_id" in contract and "gpu_instance" in contract
     publish = (ROOT / "agents" / "skills" / "quant-publish" / "SKILL.md").read_text()
-    assert "compare/" in publish
+    assert "library/" in publish
     assert "artifact store" in publish.lower() or "not the comparison" in publish.lower()
 
 

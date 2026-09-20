@@ -1,7 +1,7 @@
-# Quantized method comparison
+# Library
 
 **One library.** Weights can live on any public Hugging Face account.
-This table is how you compare them. Filter `catalog.json` by `model_id`,
+This table is how you rank them. Filter `catalog.json` by `model_id`,
 `method_name`, `gpu_instance`. Fetch with `huggingface-cli download <hub_repo_id>`.
 
 Hub collection (same rows): https://huggingface.co/collections/chris320211/quant-agent-library-6aaf22fcafd69b39eabc9230
@@ -9,8 +9,8 @@ Hub collection (same rows): https://huggingface.co/collections/chris320211/quant
 ```bash
 PY=$(command -v python || command -v python3)
 S="$PY agents/skills/_shared/scripts"
-$S/compare.py --model-id <org/model> --gpu-instance <instance>
-$S/compare.py --model-id <org/model> --method <name> --gpu-instance <instance> --fetch
+$S/library.py --model-id <org/model> --gpu-instance <instance>
+$S/library.py --model-id <org/model> --method <name> --gpu-instance <instance> --fetch
 ```
 
 Rank: `quality_ok`, then tokens/s, then lower VRAM, packed/realquant, then lower PPL ratio.
@@ -18,7 +18,11 @@ Rank: `quality_ok`, then tokens/s, then lower VRAM, packed/realquant, then lower
 Each row is **model × GPU instance × method**, with links to the paper,
 the method GitHub repo, and the Hugging Face weights.
 
-How to add a row: `agents/skills/quant-sync/SKILL.md` and `compare/LIBRARY.md`.
+Add a row after verify, `quality_ok`, and tok/s **or** VRAM beat fp16:
+`quant-publish`, then `agents/skills/quant-catalog/SKILL.md`, then
+`agents/skills/quant-sync/SKILL.md`. Do not commit checkpoints.
+Do not hand-edit `catalog.json`. Without push access, PR
+`library/contributions/<model>__<gpu>__<method>.json`.
 
 ## ibm-granite/granite-3.3-2b-instruct on g5.2xlarge
 GPU: NVIDIA A10G

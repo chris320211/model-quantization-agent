@@ -35,8 +35,8 @@ The helper **always** evaluates both sides on the same WikiText-2 test corpus:
    window first). Packed CUDA/Triton kernels compile on the first forward;
    do not treat that compile as the throughput result.
 4. Writes `jobs/<job_id>/benchmark.json` and `metrics` on the job.
-5. Records the method onto `compare/catalog.json` and
-   `compare/groups/<model>__<gpu>.json` so library users can filter
+5. Records the method onto `library/catalog.json` and
+   `library/groups/<model>__<gpu>.json` so library users can filter
    model / method / instance. Hugging Face Hub is not this index.
 
 Do not skip the fp16 side. Do not invent a different dataset unless the user
@@ -54,7 +54,7 @@ peak_vram_gb: <quant> vs <fp16>
 tokens_per_s: <quant> vs <fp16>
 efficiency_improved: <vram or throughput better>
 compare_best_method: <method_name or none>
-compare_path: compare/groups/<model>__<gpu>.json
+library_path: library/groups/<model>__<gpu>.json
 ```
 
 If the helper fails, return `failed` and the structured skill-step report.

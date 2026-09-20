@@ -2,7 +2,7 @@
 name: quant-sync
 description: >-
   After a beneficial quantization run, or when asked to update GitHub and
-  Hugging Face, push the compare library to this GitHub remote and refresh the
+  Hugging Face, push the library to this GitHub remote and refresh the
   one Hub collection. Use in the parent after quant-catalog. Not a subagent.
   Never commit checkpoints or .env.
 ---
@@ -26,28 +26,28 @@ Every new shell: if `HF_TOKEN` is unset and `.env` exists,
 ## Do
 
 ```bash
-$S/compare.py --rebuild
-$S/compare.py --sync-hf-collection
+$S/library.py --rebuild
+$S/library.py --sync-hf-collection
 $S/sync_remotes.py --push --allow-unsafe-host-execution
 ```
 
 `--sync-hf-collection` needs `HF_TOKEN` already loaded. If unset, skip that
-step and still push GitHub. `sync_remotes.py` commits only `compare/`,
+step and still push GitHub. `sync_remotes.py` commits only `library/`,
 `agents/`, `tests/`, `README.md`, and `.github/workflows/`. It never stages
 `quantized/`, `jobs/`, `out/`, `.venvs/`, `.cache/`, or `.env`. `git push`
 uses the credential helper or `GITHUB_TOKEN` via `git_askpass.sh` (not a
 remote URL). Do not run `git config`.
 
 Third parties without push access still PR
-`compare/contributions/<model>__<gpu>__<method>.json`.
+`library/contributions/<model>__<gpu>__<method>.json`.
 
-Docs: `compare/LIBRARY.md`.
+Docs: `library/README.md`.
 
 ## Return
 
 ```text
 status: synced
 github: <origin commit url or skipped>
-hf_collection: <compare/library.json url or skipped>
+hf_collection: <library/library.json url or skipped>
 commit: <sha or none>
 ```

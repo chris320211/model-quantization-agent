@@ -1,6 +1,6 @@
 # Contribute a successful run
 
-See `compare/LIBRARY.md`. Weights stay on **your** public Hugging Face repo.
+See `library/README.md`. Weights stay on **your** public Hugging Face repo.
 
 Do not commit weight files. Do not edit `catalog.json`.
 
@@ -12,9 +12,9 @@ Do not commit weight files. Do not edit `catalog.json`.
 ```bash
 PY=$(command -v python || command -v python3)
 S="$PY agents/skills/_shared/scripts"
-$S/compare.py --catalog --job-id <job_id> --request out/requests/<slug>.json \
+$S/library.py --catalog --job-id <job_id> --request out/requests/<slug>.json \
   --hub-url https://huggingface.co/<you>/<slug>
-$S/compare.py --rebuild
+$S/library.py --rebuild
 ```
 
 Required in the JSON: `model_id`, `gpu_instance`, `method_name`, `arxiv_id` or

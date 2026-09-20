@@ -33,19 +33,21 @@ Order:
 11. `quant-catalog` in the **parent** after a **beneficial** run (quality_ok and
     better VRAM or tok/s than fp16). Standard row: model, GPU instance, method,
     paper URL, method GitHub, Hugging Face URL. Writes
-    `compare/contributions/` and rebuilds `compare/catalog.json`. Docs:
-    `compare/LIBRARY.md`.
+    `library/contributions/` and rebuilds `library/catalog.json`. Docs:
+    `library/README.md`.
 12. `quant-sync` in the **parent** after catalog (or when asked to update
-    GitHub and Hugging Face). Rebuilds `compare/`, `git push`es allowlisted
+    GitHub and Hugging Face). Rebuilds `library/`, `git push`es allowlisted
     library/skill paths to this remote, and refreshes the one Hub collection.
     Never commits `quantized/`, `jobs/`, `out/`, or `.env`. Third parties
-    without push access still PR `compare/contributions/`.
+    without push access still PR `library/contributions/`.
 13. Tell the user where weights, metrics, the Hub URL (if uploaded), and
-    `compare/` rankings live. Users filter `model_id` / `method_name` /
+    `library/` rankings live. The stop report **must** include the WikiText-2
+    metric table (quantized vs fp16 PPL / tok/s / VRAM) and whether a
+    `kernel_triton` overlay ran. Users filter `model_id` / `method_name` /
     `gpu_instance`, then fetch `hub_repo_id` themselves. Rank: `quality_ok`,
     then tok/s, then lower VRAM. `is_best` / `best` is the row to pick. After
-    sync, `compare.py --rebuild` is the library table;
-    `compare.py --sync-hf-collection` lists those Hub repos in one collection.
+    sync, `library.py --rebuild` is the library table;
+    `library.py --sync-hf-collection` lists those Hub repos in one collection.
 
 ## Request JSON
 
@@ -81,10 +83,10 @@ for every new slug.
 - Overlays: `out/overlays/<slug>/<strategy>/<hash>/`
 - Jobs: `jobs/<job_id>/`
 - Weights: `./quantized/<slug>`
-- Comparison table: `compare/catalog.json` (filter `model_id`, `method_name`,
+- Library table: `library/catalog.json` (filter `model_id`, `method_name`,
   `gpu_instance`; fetch via `hub_repo_id`)
-- Comparison boards: `compare/index.json` and `compare/groups/<model>__<gpu>.json`
-- Third-party runs: `compare/contributions/<model>__<gpu>__<method>.json` (PR)
+- Library boards: `library/index.json` and `library/groups/<model>__<gpu>.json`
+- Third-party runs: `library/contributions/<model>__<gpu>__<method>.json` (PR)
 
 ## Invariants
 
@@ -165,7 +167,7 @@ Budget (method/model/GPU-agnostic — same numbers for AWQ, FlatQuant, GPTQ, …
 | `retry_ranked_overlay` | One `quant-run` on `next_overlay_dir`, then verify + benchmark (benchmark only if verify passed). Record the overlay on `tried_overlays` and increment `retry_gpu_jobs_used`. |
 | `author_fix` | One validate-only `diagnose_fix` overlay (issue codes, not free-form metrics), then one `quant-run` if budget remains. |
 | `kernel` | `quant-kernel` when diagnose says so. Parent does not inspect the overlay for SDPA. Packed GEMM-only is `prefill_kernel_missing`, not a stop. A packed kernel that failed verify is not a stop. |
-| `none` | Stop. Report last `benchmark.json` / `diagnose.json`. |
+| `none` | Stop. Report the WikiText-2 metric table from `benchmark.json` plus `diagnose.json`. |
 
 After each retry: if verify failed, diagnose again (no benchmark). After a
 passed verify, benchmark, then **always** diagnose (including on success, so

@@ -16,7 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import compare as compare_mod
+import library as library_mod
 import env
 import jobs as jobs_mod
 import paths
@@ -510,7 +510,7 @@ def benchmark_job(
     compare_payload: dict | None = None
     compare_error: str | None = None
     try:
-        compare_payload = compare_mod.record_job(job_id=meta.job_id, request=request)
+        compare_payload = library_mod.record_job(job_id=meta.job_id, request=request)
     except Exception as exc:  # noqa: BLE001 — ranking must not fail a passed WikiText-2 run
         compare_error = str(exc)
     return {

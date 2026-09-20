@@ -58,7 +58,7 @@ def test_quant_benchmark_skill_requires_wikitext_and_both_sides():
     assert "fp16" in text
     assert "command -v python || command -v python3" in text
     assert "warmup" in benchmark_mod.BENCHMARK_SCRIPT or "compile" in benchmark_mod.BENCHMARK_SCRIPT.lower()
-    assert "compare.py" in text or "compare/" in text
+    assert "library.py" in text or "library/" in text
 
 
 def test_parent_pipeline_always_launches_benchmark():

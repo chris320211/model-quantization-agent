@@ -19,6 +19,10 @@
       "packed": true,
       "hub_url": "https://huggingface.co/chris320211/flatquant-phi3-mini-4k-g52xlarge",
       "hub_repo_id": "chris320211/flatquant-phi3-mini-4k-g52xlarge",
+      "arxiv_id": "2410.09426",
+      "paper_url": "https://arxiv.org/abs/2410.09426",
+      "repo_url": "https://github.com/ruikangliu/FlatQuant",
+      "repo_commit": "9d88ffcb7d2c6bda59fb5c44dad36adc101aadb1",
       "artifact_dir": "quantized/flatquant-phi3-mini-4k-g52xlarge",
       "job_id": "20260919T202736Z-5a1860",
       "slug": "flatquant-phi3-mini-4k-g52xlarge"

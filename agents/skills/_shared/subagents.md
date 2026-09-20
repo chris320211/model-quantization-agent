@@ -9,10 +9,11 @@ value. It does not search, clone, adapt, or run GPU jobs itself.
 - One stage per subagent. Fresh context.
 - Pass only paths and the three user inputs. Never paste tokens, `.env`, or credential files.
   Secrets: `agents/AGENTS.md` — never read or print `.env`.
-- `quant-setup` and `quant-publish` stay in the **parent**. Do not spawn a
-  subagent for secrets or Hub upload. `quant-setup` asks for a local `.env`
-  once (copy `.env.example`); load it every shell. Never read `.env`. Method comparison is `compare/`
-  (written by `benchmark.py`), not a Hub leaderboard and not a subagent.
+- `quant-setup`, `quant-publish`, and `quant-catalog` stay in the **parent**.
+  Do not spawn a subagent for secrets, Hub upload, or the library row.
+  `quant-setup` asks for a local `.env` once (copy `.env.example`); load it
+  every shell. Never read `.env`. Method comparison is `compare/` (written by
+  `quant-catalog` / `compare.py`), not a Hub leaderboard and not a subagent.
 - Wait until a subagent returns before starting the next **stage**.
 - **Port is the exception:** the port coordinator launches up to three *named*
   strategy subagents at once (author + validate only). The parent still runs

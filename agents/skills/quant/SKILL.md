@@ -35,13 +35,12 @@ Then launch **one subagent per stage**, in order. Do not do stage work yourself.
    pullable weights; the library table is `compare/catalog.json` (filter model,
    method, instance; `is_best` is the pick; `--fetch` prints
    `huggingface-cli download`).
-8. If verify passed and `quality_ok`, **quant-publish** in this session (not a
-   subagent): stage `out/hub/<slug>/` and upload to Hugging Face Hub when
-   `HF_TOKEN` is already in the environment. Same for every method. Upload does
-   not replace `compare/` — it only adds `hub_url` on that method's row and
-   writes `compare/contributions/<model>__<gpu>__<method>.json`. Tell the user
-   they can PR that file so others see the run in `catalog.json`. Do not commit
-   weight files.
+8. If verify passed and `quality_ok` **and** VRAM or tok/s beat fp16,
+   **quant-publish** then **quant-catalog** in this session (not subagents).
+   Catalog writes the standard library row: model, GPU instance, method, paper,
+   method GitHub, Hugging Face. Tell the user they can PR
+   `compare/contributions/<model>__<gpu>__<method>.json`. Do not commit
+   weight files. Docs: `compare/LIBRARY.md`.
 
 ## Retry loop (any inputs)
 

@@ -92,6 +92,7 @@ library_name: transformers
 pipeline_tag: text-generation
 tags:
 - quantized
+- quant-agent
 - {method.lower().replace(" ", "-")}
 - wikitext-2
 ---
@@ -312,6 +313,14 @@ def main() -> int:
                     )
                 except Exception:
                     pass
+                try:
+                    library = compare_mod.sync_hf_collection()
+                    manifest["library"] = {
+                        "hf_collection_url": library.get("hf_collection_url"),
+                        "added": library.get("added"),
+                    }
+                except Exception as exc:
+                    manifest["library"] = {"status": "skipped", "error": str(exc)[:240]}
         print(json.dumps(manifest, indent=2))
     except Exception as exc:
         print(str(exc), file=sys.stderr)

@@ -1,9 +1,10 @@
 # Quantized method comparison
 
-Filter `catalog.json` by `model_id`, `method_name`, `gpu_instance`.
-Compare WikiText-2 metrics on the matching rows. Fetch weights yourself
-with `huggingface-cli download <hub_repo_id>` (Hub stores files; this table
-is the library index).
+**One library.** Weights can live on any public Hugging Face account.
+This table is how you compare them. Filter `catalog.json` by `model_id`,
+`method_name`, `gpu_instance`. Fetch with `huggingface-cli download <hub_repo_id>`.
+
+Hub collection (same rows): https://huggingface.co/collections/chris320211/quant-agent-library-6aaf22fcafd69b39eabc9230
 
 ```bash
 PY=$(command -v python || command -v python3)
@@ -14,17 +15,17 @@ $S/compare.py --model-id <org/model> --method <name> --gpu-instance <instance> -
 
 Rank: `quality_ok`, then tokens/s, then lower VRAM, packed/realquant, then lower PPL ratio.
 
-## Contribute a run
+Each row is **model × GPU instance × method**, with links to the paper,
+the method GitHub repo, and the Hugging Face weights.
 
-Do not edit `catalog.json`. Upload public weights to Hugging Face, then add one
-JSON file under `contributions/` and open a PR. Schema: `contributions/README.md`.
+How to add a row: `agents/skills/quant-catalog/SKILL.md` and `compare/LIBRARY.md`.
 
 ## microsoft/Phi-3-mini-4k-instruct on g5.2xlarge
 GPU: NVIDIA A10G
 
-| Rank | Method | PPL ratio | tok/s | VRAM GB | packed | quality_ok | pull |
-| ---: | --- | ---: | ---: | ---: | --- | --- | --- |
-| 1 | FlatQuant | 1.1676 | 5105.9 | 3.355 | yes | yes | https://huggingface.co/chris320211/flatquant-phi3-mini-4k-g52xlarge |
+| Model | GPU | Method | Paper | Repo | Hugging Face | PPL ratio | tok/s | VRAM GB |
+| --- | --- | --- | --- | --- | --- | ---: | ---: | ---: |
+| microsoft/Phi-3-mini-4k-instruct | g5.2xlarge | FlatQuant | [paper](https://arxiv.org/abs/2410.09426) | [repo](https://github.com/ruikangliu/FlatQuant) | [hub](https://huggingface.co/chris320211/flatquant-phi3-mini-4k-g52xlarge) | 1.1676 | 5105.9 | 3.355 |
 
 **Best:** FlatQuant (`flatquant-phi3-mini-4k-g52xlarge`).
 

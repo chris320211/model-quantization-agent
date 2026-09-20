@@ -44,8 +44,11 @@ $S/publish.py --job-id <job_id> --request out/requests/<slug>.json \
 ```
 
 `--repo-id` is `org/name` on the Hub. Default suggestion is
-`<hf-username>/<slug>`. Create a **public model** repo. Do not upload Hub
-fp16, job logs, or `.env`.
+`<hf-username>/<slug>` (their account is fine). Create a **public model** repo.
+Do not upload Hub fp16, job logs, or `.env`. After upload, this helper records
+the row in `compare/` and adds the repo to the **one** Hub collection
+(`compare.py --sync-hf-collection`). Other people still PR a contribution JSON
+so the library table is reviewable.
 
 If the token is missing, leave the staged bundle and tell the user to set
 `HF_TOKEN` via `quant-setup`, then re-run with `--upload`.
@@ -60,7 +63,8 @@ metrics: out/hub/<slug>/metrics.json
 compare: compare/catalog.json   # filter model / method / instance, then fetch hub_repo_id
 ```
 
-After a successful `--upload`, `publish.py` writes `hub_url` onto that
-method's row in `compare/` and exports `compare/contributions/<model>__<gpu>__<method>.json`.
-Tell the user to open a PR with that JSON (weights stay on the Hub). Staging
-without upload still leaves the WikiText-2 row from `benchmark.py`.
+After a successful `--upload`, run **quant-catalog** in this same parent
+session so the library row has model, GPU, method, paper, method repo, and
+Hub links. `publish.py` also writes `hub_url` and
+`compare/contributions/<model>__<gpu>__<method>.json`; the catalog skill is
+the standard for a beneficial run. Docs: `compare/LIBRARY.md`.

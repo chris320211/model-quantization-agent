@@ -16,6 +16,7 @@ SKILL_NAMES = (
     "quant-diagnose",
     "quant-kernel",
     "quant-publish",
+    "quant-catalog",
 )
 REQUIRED_SCRIPTS = (
     "adapter.py",
@@ -58,6 +59,12 @@ def test_skill_docs_have_no_obsolete_codex_paths():
     assert "recommended_action" in subagents
     assert "compare/" in subagents
     parent = (ROOT / "agents" / "skills" / "quant" / "SKILL.md").read_text()
+    assert "quant-catalog" in parent
+    catalog = (ROOT / "agents" / "skills" / "quant-catalog" / "SKILL.md").read_text()
+    assert "paper_url" in catalog
+    assert "repo_url" in catalog
+    assert "hub_url" in catalog
+    assert "compare/LIBRARY.md" in catalog
     assert "Retry loop (you)" in parent
     assert "quant-retry" in parent
     assert "every method × model × GPU" in parent
@@ -186,7 +193,7 @@ def test_skills_point_at_shared_scripts():
             if marker in text and path.name == "AGENTS.md":
                 continue
             assert marker not in text, f"{path.relative_to(ROOT)} still mentions {marker}"
-    for name in ("quant-gather", "quant-port", "quant-run", "quant-verify", "quant-benchmark", "quant-diagnose", "quant-kernel", "quant-publish"):
+    for name in ("quant-gather", "quant-port", "quant-run", "quant-verify", "quant-benchmark", "quant-diagnose", "quant-kernel", "quant-publish", "quant-catalog"):
         text = (ROOT / "agents" / "skills" / name / "SKILL.md").read_text()
         assert "agents/skills/_shared/scripts" in text
         assert "out/ports/" not in text

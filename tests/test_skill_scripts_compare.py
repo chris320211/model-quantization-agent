@@ -145,12 +145,16 @@ def test_record_job_replaces_same_method_and_ranks_two_methods(tmp_path, monkeyp
             "gpu_instance": "g5.2xlarge",
             "gpu_name": "NVIDIA A10G",
             "slug": "flatquant-phi3-mini-4k-g52xlarge",
+            "arxiv_id": "2410.09426",
+            "repo_url": "https://github.com/ruikangliu/FlatQuant",
         },
         hub_url="https://huggingface.co/example/flatquant-phi3",
     )
     assert first["best"]["method_name"] == "FlatQuant"
     assert first["methods"][0]["packed"] is True
     assert first["methods"][0]["hub_url"].endswith("flatquant-phi3")
+    assert first["methods"][0]["paper_url"] == "https://arxiv.org/abs/2410.09426"
+    assert first["methods"][0]["repo_url"] == "https://github.com/ruikangliu/FlatQuant"
 
     _write_job(tmp_path, job_b, packed=True, tps=5105.9, ratio=1.17)
     second = compare_mod.record_job(
@@ -160,6 +164,8 @@ def test_record_job_replaces_same_method_and_ranks_two_methods(tmp_path, monkeyp
             "model_id": "microsoft/Phi-3-mini-4k-instruct",
             "gpu_instance": "g5.2xlarge",
             "slug": "flatquant-phi3-mini-4k-g52xlarge",
+            "arxiv_id": "2410.09426",
+            "repo_url": "https://github.com/ruikangliu/FlatQuant",
         },
     )
     methods = {row["method_name"]: row for row in second["methods"]}
@@ -242,6 +248,8 @@ def test_contribution_json_is_the_pr_unit(tmp_path, monkeypatch):
         "fp16_peak_vram_gb": 9.68,
         "packed": True,
         "hub_repo_id": "someone/awq-phi3",
+        "arxiv_id": "2306.00978",
+        "repo_url": "https://github.com/mit-han-lab/llm-awq",
         "dataset": "wikitext-2-raw-v1",
         "max_seq_len": 2048,
     }
@@ -271,6 +279,8 @@ def test_validate_contribution_requires_hub_and_quality():
         "fp16_tokens_per_s": 80.0,
         "fp16_peak_vram_gb": 8.0,
         "hub_repo_id": "org/awq-model",
+        "arxiv_id": "2306.00978",
+        "repo_url": "https://github.com/mit-han-lab/llm-awq",
     }
     compare_mod.validate_contribution(base)
     bad_quality = dict(base, quality_ok=False)
@@ -287,6 +297,13 @@ def test_validate_contribution_requires_hub_and_quality():
         assert "hub_repo_id" in str(exc)
     else:
         raise AssertionError("expected hub_repo_id rejection")
+    missing_paper = dict(base, arxiv_id=None, paper_url=None)
+    try:
+        compare_mod.validate_contribution(missing_paper)
+    except ValueError as exc:
+        assert "paper" in str(exc)
+    else:
+        raise AssertionError("expected paper rejection")
 
 
 def test_pick_best_none_when_nothing_quality_ok():
@@ -302,3 +319,97 @@ def test_quant_skills_point_at_compare_index():
     assert "compare/" in bench
     assert "contributions" in parent
     assert "contributions" in publish
+    catalog = (ROOT / "agents" / "skills" / "quant-catalog" / "SKILL.md").read_text()
+    assert "--catalog" in catalog
+    assert (ROOT / "compare" / "LIBRARY.md").is_file()
+    assert "library.json" in publish or "sync-hf-collection" in publish
+
+
+def test_collection_entries_dedupes_and_skips_failed_quality():
+    rows = [
+        {
+            "hub_repo_id": "a/one",
+            "quality_ok": True,
+            "method_name": "AWQ",
+            "model_id": "org/m",
+            "gpu_instance": "g5.2xlarge",
+            "ppl_ratio": 1.1,
+        },
+        {
+            "hub_repo_id": "a/one",
+            "quality_ok": True,
+            "method_name": "AWQ-again",
+            "model_id": "org/m",
+            "gpu_instance": "g5.2xlarge",
+            "ppl_ratio": 1.2,
+        },
+        {
+            "hub_repo_id": "b/two",
+            "quality_ok": False,
+            "method_name": "Broken",
+            "model_id": "org/m",
+            "gpu_instance": "g5.2xlarge",
+            "ppl_ratio": 3.0,
+        },
+        {
+            "hub_repo_id": "c/three",
+            "quality_ok": True,
+            "method_name": "FlatQuant",
+            "model_id": "org/m",
+            "gpu_instance": "g6e.xlarge",
+            "ppl_ratio": 1.05,
+        },
+    ]
+    items = compare_mod.collection_entries(rows)
+    assert [item["item_id"] for item in items] == ["a/one", "c/three"]
+
+
+def test_repo_contributions_join_one_library():
+    contrib_dir = ROOT / "compare" / "contributions"
+    files = list(contrib_dir.glob("*.json"))
+    assert files, "expected at least one contribution JSON in the shared library"
+    for path in files:
+        compare_mod.validate_contribution(json.loads(path.read_text()))
+    rows = compare_mod.query()
+    assert any(row.get("hub_repo_id") for row in rows)
+    assert any(row.get("paper_url") and row.get("repo_url") for row in rows)
+
+
+def test_catalog_run_records_standard_links(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths_mod, "JOBS_ROOT", tmp_path / "jobs")
+    monkeypatch.setattr(paths_mod, "COMPARE_ROOT", tmp_path / "compare")
+    monkeypatch.setattr(paths_mod, "REPO_ROOT", tmp_path)
+    job_id = "20260101T000000Z-eeeeee"
+    _write_job(tmp_path, job_id, packed=True, tps=5105.9, ratio=1.17)
+    request = {
+        "method_name": "FlatQuant",
+        "model_id": "microsoft/Phi-3-mini-4k-instruct",
+        "gpu_instance": "g5.2xlarge",
+        "gpu_name": "NVIDIA A10G",
+        "slug": "flatquant-phi3-mini-4k-g52xlarge",
+        "arxiv_id": "2410.09426",
+        "repo_url": "https://github.com/ruikangliu/FlatQuant",
+        "repo_commit": "9d88ffcb7d2c6bda59fb5c44dad36adc101aadb1",
+    }
+    result = compare_mod.catalog_run(
+        job_id=job_id,
+        request=request,
+        hub_url="https://huggingface.co/you/flatquant-phi3",
+    )
+    assert result["status"] == "cataloged"
+    assert result["paper_url"] == "https://arxiv.org/abs/2410.09426"
+    assert result["repo_url"] == "https://github.com/ruikangliu/FlatQuant"
+    row = compare_mod.query(method_name="FlatQuant")[0]
+    assert row["model_id"] == "microsoft/Phi-3-mini-4k-instruct"
+    assert row["gpu_instance"] == "g5.2xlarge"
+    assert row["hub_repo_id"] == "you/flatquant-phi3"
+    readme = (tmp_path / "compare" / "README.md").read_text()
+    assert "arxiv.org/abs/2410.09426" in readme
+    assert "github.com/ruikangliu/FlatQuant" in readme
+    assert "huggingface.co/you/flatquant-phi3" in readme
+    try:
+        compare_mod.catalog_run(job_id=job_id, request=request, hub_url="")
+    except ValueError as exc:
+        assert "hub-url" in str(exc)
+    else:
+        raise AssertionError("expected missing hub url rejection")

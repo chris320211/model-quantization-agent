@@ -30,16 +30,19 @@ Order:
     card + weights + WikiText-2 metrics). Uses `HF_TOKEN` like `quant-setup`;
     never a subagent. Hugging Face Hub is the **artifact store** (one repo per
     method × model run). It is not the comparison UI.
-11. Tell the user where weights, metrics, the Hub URL (if uploaded), and
-    `compare/` rankings live. `compare.py` records each passed WikiText-2
-    benchmark into `compare/catalog.json` (flat filter table) and
-    `compare/groups/<model>__<gpu>.json` (ranked board). Users filter
-    `model_id` / `method_name` / `gpu_instance`, then fetch
-    `hub_repo_id` themselves. Rank: `quality_ok`, then tok/s, then lower VRAM.
-    `is_best` / `best` is the row to pick. A later AWQ run on the same model
-    and GPU ranks against FlatQuant on that board. Third parties contribute
-    with a public Hub upload plus one JSON under `compare/contributions/`
-    (PR); they must not edit `catalog.json` or commit weight files.
+11. `quant-catalog` in the **parent** after a **beneficial** run (quality_ok and
+    better VRAM or tok/s than fp16). Standard row: model, GPU instance, method,
+    paper URL, method GitHub, Hugging Face URL. Writes
+    `compare/contributions/` and rebuilds `compare/catalog.json`. Docs:
+    `compare/LIBRARY.md`.
+12. Tell the user where weights, metrics, the Hub URL (if uploaded), and
+    `compare/` rankings live. Users filter `model_id` / `method_name` /
+    `gpu_instance`, then fetch `hub_repo_id` themselves. Rank: `quality_ok`,
+    then tok/s, then lower VRAM. `is_best` / `best` is the row to pick. Third
+    parties contribute with a public Hub upload plus one JSON under
+    `compare/contributions/` (PR); they must not edit `catalog.json` or commit
+    weight files. After merge, `compare.py --rebuild` is the library table;
+    `compare.py --sync-hf-collection` lists those Hub repos in one collection.
 
 ## Request JSON
 

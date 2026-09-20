@@ -1,0 +1,30 @@
+name: Library
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "compare/contributions/**"
+      - "compare/catalog.json"
+      - "compare/library.json"
+      - "agents/skills/_shared/scripts/compare.py"
+
+jobs:
+  sync-collection:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -c constraints.txt huggingface_hub pyyaml
+      - name: Sync Hugging Face collection
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          if [ -z "${HF_TOKEN}" ]; then
+            echo "HF_TOKEN secret not set; skip collection sync"
+            exit 0
+          fi
+          python agents/skills/_shared/scripts/compare.py --sync-hf-collection

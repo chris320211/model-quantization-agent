@@ -12,6 +12,7 @@ and follow `agents/skills/quant/SKILL.md`. That file is the parent dispatcher.
 | `agents/skills/quant/SKILL.md` | Parent loop |
 | `agents/skills/quant-setup/SKILL.md` | `.env` once per machine; load every shell |
 | `agents/skills/quant-gather/` … `quant-publish/` | One stage each |
+| `agents/skills/quant-catalog/SKILL.md` | Library row after a beneficial run |
 | `agents/skills/_shared/pipeline_contract.md` | Order, retries, layout |
 | `agents/skills/_shared/subagents.md` | How to launch stages |
 | `agents/skills/_shared/scripts/` | Helpers (`$PY agents/skills/_shared/scripts/<name>.py`) |

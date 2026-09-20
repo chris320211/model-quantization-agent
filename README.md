@@ -8,13 +8,14 @@ metrics against the fp16 snapshot.
 
 ## Find, compare, fetch
 
-Library users do not run the agent. They filter one table, compare metrics,
-then download weights themselves from Hugging Face.
+**One library.** Each row is model × GPU instance × method, with links to the
+paper, the method GitHub repo, and Hugging Face weights. Details:
+`compare/LIBRARY.md`.
 
-1. **Table:** `compare/catalog.json` — one row per method × model × instance.
-2. **Filter** any of `model_id`, `method_name`, `gpu_instance`.
-3. **Compare** WikiText-2 PPL / tok/s / VRAM on the matching rows (`is_best` is the pick).
-4. **Fetch** with `huggingface-cli download <hub_repo_id>` (or `snapshot_download`).
+1. Filter `compare/catalog.json` by `model_id`, `method_name`, `gpu_instance`.
+2. Compare WikiText-2 PPL / tok/s / VRAM (`is_best` is the pick).
+3. Open paper / method repo / Hub from the row, or `huggingface-cli download <hub_repo_id>`.
+4. Hub collection URL lives in `compare/library.json`.
 
 ```bash
 PY=$(command -v python || command -v python3)
@@ -24,27 +25,27 @@ $S/compare.py --model-id microsoft/Phi-3-mini-4k-instruct --gpu-instance g5.2xla
 $S/compare.py --model-id microsoft/Phi-3-mini-4k-instruct --method FlatQuant --fetch
 ```
 
-`--fetch` prints the download command. It does not download. If `hub_repo_id`
-is null, that row is local-only until `quant-publish --upload`.
+`--fetch` prints the download command. It does not download.
 
 ## Contribute a run
 
-Others post successful runs the same way: **public Hub weights** + **one JSON PR**.
-Do not commit checkpoints and do not edit `catalog.json`.
+After a **beneficial** run (quality_ok and better VRAM or tok/s than fp16):
+`quant-publish`, then `quant-catalog`. Do not commit checkpoints.
 
-1. Run the agent (or the same WikiText-2 helper) until `quality_ok`.
-2. Upload weights: `quant-publish --upload --repo-id <you>/<slug>`.
-3. Add `compare/contributions/<model>__<gpu>__<method>.json` and open a PR.
+1. Upload: `quant-publish --upload --repo-id <you>/<slug>`
+2. Record the standard row (model, GPU, method, paper, repo, Hub):
+   `agents/skills/quant-catalog/SKILL.md`
+3. PR `compare/contributions/<model>__<gpu>__<method>.json`
 
 ```bash
 PY=$(command -v python || command -v python3)
 S="$PY agents/skills/_shared/scripts"
-$S/compare.py --job-id <job_id> --request out/requests/<slug>.json \
-  --hub-url https://huggingface.co/<you>/<slug> --export-contribution
+$S/compare.py --catalog --job-id <job_id> --request out/requests/<slug>.json \
+  --hub-url https://huggingface.co/<you>/<slug>
 ```
 
-Details: `compare/contributions/README.md`. After merge, the row shows up in
-`catalog.json` for the same model × instance, ranked against other methods.
+Details: `compare/LIBRARY.md`. After merge, the row ranks against other methods
+on the same model × instance.
 
 ## Agent workflow
 
@@ -73,14 +74,10 @@ Helpers: `agents/skills/_shared/scripts/`. No method catalog inside the agent lo
    (pack if the repo has it, plus prefill SDPA/flash).
 9. **quant-publish** — parent only. Stages `out/hub/<slug>/` (weights + WikiText-2
    `metrics.json` + model card) and uploads to Hugging Face Hub when `HF_TOKEN`
-   is set so others can `snapshot_download` the artifact. Hub is **not** how
-   methods are compared. `compare/` ranks every method on the same `model_id`
-   × `gpu_instance` (quality_ok, then tok/s, then VRAM) so a user can pick
-   the best and pull that row's weights.
-10. **compare** — written by `benchmark.py` after every passed WikiText-2 run.
-    `compare/index.json` lists boards; `compare/groups/<model>__<gpu>.json`
-    has one row per method and a `best` pick. Optional Hub URL on the row
-    after publish upload.
+   is set.
+10. **quant-catalog** — parent only, after a beneficial run. Writes the standard
+    library row (model, GPU instance, method, paper, method repo, Hugging Face)
+    into `compare/catalog.json`. See `compare/LIBRARY.md`.
 
 ## Setup
 

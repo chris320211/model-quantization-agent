@@ -14,9 +14,10 @@ and `jobs/<job_id>/benchmark.json` (quant-benchmark). Skip unless
 is `kernel` (dense fakequant, VRAM, tokens/s, or `prefill_kernel_missing`). Do not run if quality failed.
 
 This stage is method-agnostic: rewrite whatever hot path this repo uses on
-this GPU type.
+this GPU type. Do not ask the parent mid-stage. If `HF_TOKEN` is unset and
+`.env` exists, `source agents/skills/_shared/load_env.sh .env` (never print values).
 
-`PY=$(command -v python || command -v python3)`
+`PY=$([ -x .venv/bin/python ] && echo .venv/bin/python || command -v python || command -v python3)`
 `S="$PY agents/skills/_shared/scripts"`
 
 ## Do

@@ -18,7 +18,16 @@ Rank: `quality_ok`, then tokens/s, then lower VRAM, packed/realquant, then lower
 Each row is **model × GPU instance × method**, with links to the paper,
 the method GitHub repo, and the Hugging Face weights.
 
-How to add a row: `agents/skills/quant-catalog/SKILL.md` and `compare/LIBRARY.md`.
+How to add a row: `agents/skills/quant-sync/SKILL.md` and `compare/LIBRARY.md`.
+
+## ibm-granite/granite-3.3-2b-instruct on g5.2xlarge
+GPU: NVIDIA A10G
+
+| Model | GPU | Method | Paper | Repo | Hugging Face | PPL ratio | tok/s | VRAM GB |
+| --- | --- | --- | --- | --- | --- | ---: | ---: | ---: |
+| ibm-granite/granite-3.3-2b-instruct | g5.2xlarge | SmoothQuant | [paper](https://arxiv.org/abs/2211.10438) | [repo](https://github.com/mit-han-lab/smoothquant) | [hub](https://huggingface.co/chris320211/smoothquant-granite33-2b-g52xlarge) | 1.0060 | 9501.7 | 3.377 |
+
+**Best:** SmoothQuant (`smoothquant-granite33-2b-g52xlarge`).
 
 ## microsoft/Phi-3-mini-4k-instruct on g5.2xlarge
 GPU: NVIDIA A10G

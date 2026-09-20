@@ -16,7 +16,7 @@ fp16 **VRAM or tok/s**. Need `job_id`, the request JSON, and the Hub URL from
 Standard row: **model**, **GPU instance**, **method**, **paper**, **method repo**,
 **Hugging Face**. Same shape every time.
 
-`PY=$(command -v python || command -v python3)`
+`PY=$([ -x .venv/bin/python ] && echo .venv/bin/python || command -v python || command -v python3)`
 `S="$PY agents/skills/_shared/scripts"`
 
 ## Do
@@ -31,7 +31,9 @@ $S/compare.py --sync-hf-collection
 
 `--sync-hf-collection` needs `HF_TOKEN` already loaded. If unset, skip sync.
 
-Do not edit `catalog.json` by hand. Do not commit weights. Open a PR with
+Do not edit `catalog.json` by hand. Do not commit weights. Then run
+**quant-sync** in this parent session (GitHub push + Hub collection). Third
+parties without push access PR
 `compare/contributions/<model>__<gpu>__<method>.json`.
 
 Docs: `compare/LIBRARY.md`.

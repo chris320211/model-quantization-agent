@@ -10,10 +10,12 @@ description: >-
 # Quant Benchmark
 
 You are a **subagent**. Do only benchmark. Need `job_id` and the request JSON.
+Do not ask the parent mid-stage. If `HF_TOKEN` is unset and `.env` exists,
+`source agents/skills/_shared/load_env.sh .env` (never print values).
 Requires **quant-verify passed**. Do not treat generate-smoke or
 `verify.py --baseline` as this report.
 
-`PY=$(command -v python || command -v python3)`
+`PY=$([ -x .venv/bin/python ] && echo .venv/bin/python || command -v python || command -v python3)`
 `S="$PY agents/skills/_shared/scripts"`
 
 ## Do

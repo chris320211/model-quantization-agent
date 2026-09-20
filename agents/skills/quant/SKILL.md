@@ -19,7 +19,7 @@ values; you never create or read that file). If `.env` exists, ask them to
 `source agents/skills/_shared/load_env.sh .env` when `HF_TOKEN` is unset.
 Then launch **one subagent per stage**, in order. Do not do stage work yourself. Helpers:
 `"$PY" agents/skills/_shared/scripts/<name>.py` with
-`PY=$(command -v python || command -v python3)`. Secrets: follow
+`PY=$([ -x .venv/bin/python ] && echo .venv/bin/python || command -v python || command -v python3)`. Secrets: follow
 `agents/AGENTS.md` — never read, print, or paste `.env` or token values.
 
 ## Order
@@ -36,11 +36,13 @@ Then launch **one subagent per stage**, in order. Do not do stage work yourself.
    method, instance; `is_best` is the pick; `--fetch` prints
    `huggingface-cli download`).
 8. If verify passed and `quality_ok` **and** VRAM or tok/s beat fp16,
-   **quant-publish** then **quant-catalog** in this session (not subagents).
-   Catalog writes the standard library row: model, GPU instance, method, paper,
-   method GitHub, Hugging Face. Tell the user they can PR
-   `compare/contributions/<model>__<gpu>__<method>.json`. Do not commit
-   weight files. Docs: `compare/LIBRARY.md`.
+   **quant-publish**, **quant-catalog**, then **quant-sync** in this session
+   (not subagents). Catalog writes the standard library row: model, GPU
+   instance, method, paper, method GitHub, Hugging Face. Sync pushes that
+   row to this GitHub remote and refreshes the Hub collection. Do not commit
+   weight files. Third parties without push access PR
+   `compare/contributions/<model>__<gpu>__<method>.json`. Docs:
+   `compare/LIBRARY.md`.
 
 ## Retry loop (any inputs)
 

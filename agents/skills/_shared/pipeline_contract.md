@@ -9,7 +9,7 @@ Interpreter: Ubuntu GPU AMIs often ship `python3` only; CI may provide `python`.
 Resolve once per shell, then use `$S/<script>.py`:
 
 ```bash
-PY=$(command -v python || command -v python3)
+PY=$([ -x .venv/bin/python ] && echo .venv/bin/python || command -v python || command -v python3)
 S="$PY agents/skills/_shared/scripts"
 ```
 
@@ -35,13 +35,16 @@ Order:
     paper URL, method GitHub, Hugging Face URL. Writes
     `compare/contributions/` and rebuilds `compare/catalog.json`. Docs:
     `compare/LIBRARY.md`.
-12. Tell the user where weights, metrics, the Hub URL (if uploaded), and
+12. `quant-sync` in the **parent** after catalog (or when asked to update
+    GitHub and Hugging Face). Rebuilds `compare/`, `git push`es allowlisted
+    library/skill paths to this remote, and refreshes the one Hub collection.
+    Never commits `quantized/`, `jobs/`, `out/`, or `.env`. Third parties
+    without push access still PR `compare/contributions/`.
+13. Tell the user where weights, metrics, the Hub URL (if uploaded), and
     `compare/` rankings live. Users filter `model_id` / `method_name` /
     `gpu_instance`, then fetch `hub_repo_id` themselves. Rank: `quality_ok`,
-    then tok/s, then lower VRAM. `is_best` / `best` is the row to pick. Third
-    parties contribute with a public Hub upload plus one JSON under
-    `compare/contributions/` (PR); they must not edit `catalog.json` or commit
-    weight files. After merge, `compare.py --rebuild` is the library table;
+    then tok/s, then lower VRAM. `is_best` / `best` is the row to pick. After
+    sync, `compare.py --rebuild` is the library table;
     `compare.py --sync-hf-collection` lists those Hub repos in one collection.
 
 ## Request JSON

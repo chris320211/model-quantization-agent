@@ -22,9 +22,10 @@ After verify passed, `quality_ok`, and tok/s **or** VRAM beat fp16. Then:
 
 1. `quant-publish --upload --repo-id <you>/<slug>`
 2. Follow `agents/skills/quant-catalog/SKILL.md`
-3. PR only `compare/contributions/<model>__<gpu>__<method>.json`
+3. Follow `agents/skills/quant-sync/SKILL.md` (GitHub + Hub collection)
 
-Do not commit checkpoints. Do not hand-edit `catalog.json`.
+Do not commit checkpoints. Do not hand-edit `catalog.json`. Third parties
+without push access PR `compare/contributions/<model>__<gpu>__<method>.json`.
 
 ```bash
 PY=$(command -v python || command -v python3)

@@ -8,19 +8,22 @@ value. It does not search, clone, adapt, or run GPU jobs itself.
 
 - One stage per subagent. Fresh context.
 - Pass only paths and the three user inputs. Never paste tokens, `.env`, or credential files.
-  Secrets: `agents/AGENTS.md` — never read or print `.env`.
-- `quant-setup`, `quant-publish`, and `quant-catalog` stay in the **parent**.
-  Do not spawn a subagent for secrets, Hub upload, or the library row.
-  `quant-setup` asks for a local `.env` once (copy `.env.example`); load it
-  every shell. Never read `.env`. Method comparison is `compare/` (written by
-  `quant-catalog` / `compare.py`), not a Hub leaderboard and not a subagent.
+  Secrets: `agents/AGENTS.md` — never read or print `.env`. Each stage shell
+  sources `agents/skills/_shared/load_env.sh .env` when `HF_TOKEN` is unset
+  and `.env` exists. Do not ask the parent for extra inputs mid-stage.
+- `quant-setup`, `quant-publish`, `quant-catalog`, and `quant-sync` stay in
+  the **parent**. Do not spawn a subagent for secrets, Hub upload, the library
+  row, or `git push`. `quant-setup` asks for a local `.env` once (copy
+  `.env.example`); load it every shell. Never read `.env`. Method comparison is
+  `compare/` (written by `quant-catalog` / `compare.py`, shipped by
+  `quant-sync`), not a Hub leaderboard and not a subagent.
 - Wait until a subagent returns before starting the next **stage**.
 - **Port is the exception:** the port coordinator launches up to three *named*
   strategy subagents at once (author + validate only). The parent still runs
   **one** GPU job, using the winner, then the next ranked overlay if verify fails.
 - If a subagent fails, stop or retry **that** stage. Do not silently skip ahead.
 - Scripts: `"$PY" agents/skills/_shared/scripts/<name>.py` with
-  `PY=$(command -v python || command -v python3)`.
+  `PY=$([ -x .venv/bin/python ] && echo .venv/bin/python || command -v python || command -v python3)`.
 
 ## How to launch
 

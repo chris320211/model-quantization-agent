@@ -6,7 +6,8 @@ Do not commit weight files. Do not edit `catalog.json`.
 
 1. Beneficial WikiText-2 run (`quality_ok` and better VRAM or tok/s than fp16).
 2. `quant-publish --upload --repo-id <you>/<slug>`
-3. `quant-catalog` (writes this JSON). Open a PR.
+3. `quant-catalog` (writes this JSON).
+4. `quant-sync` (this GitHub remote + Hub collection). Without push access, open a PR.
 
 ```bash
 PY=$(command -v python || command -v python3)

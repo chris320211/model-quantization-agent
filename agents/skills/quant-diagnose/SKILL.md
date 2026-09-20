@@ -13,9 +13,11 @@ You are a **subagent**. Do only diagnose (and a **validate-only** overlay patch
 if the helper says `author_fix`). Need `job_id` and the request JSON.
 Do not launch a GPU job. Do not invent a retry loop; the parent executes
 `recommended_action` with a GPU budget. The helper is **method-agnostic**:
-same issue codes for every method × model × GPU.
+same issue codes for every method × model × GPU. Do not ask the parent
+mid-stage. If `HF_TOKEN` is unset and `.env` exists,
+`source agents/skills/_shared/load_env.sh .env` (never print values).
 
-`PY=$(command -v python || command -v python3)`
+`PY=$([ -x .venv/bin/python ] && echo .venv/bin/python || command -v python || command -v python3)`
 `S="$PY agents/skills/_shared/scripts"`
 
 ## Do

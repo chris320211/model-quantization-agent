@@ -323,6 +323,10 @@ def test_quant_skills_point_at_compare_index():
     assert "--catalog" in catalog
     assert (ROOT / "compare" / "LIBRARY.md").is_file()
     assert "library.json" in publish or "sync-hf-collection" in publish
+    sync = (ROOT / "agents" / "skills" / "quant-sync" / "SKILL.md").read_text()
+    assert "sync_remotes.py" in sync
+    assert "--push" in sync
+    assert "quant-sync" in parent
 
 
 def test_collection_entries_dedupes_and_skips_failed_quality():

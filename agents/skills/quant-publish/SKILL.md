@@ -20,7 +20,7 @@ the WikiText-2 numbers from `benchmark.json`. Not a method catalog. One Hub
 repo is one method's weights + card. Users compare methods in `compare/`
 (keyed by `model_id` × `gpu_instance`), not by browsing Hub model cards.
 
-`PY=$(command -v python || command -v python3)`
+`PY=$([ -x .venv/bin/python ] && echo .venv/bin/python || command -v python || command -v python3)`
 `S="$PY agents/skills/_shared/scripts"`
 
 ## Do
@@ -63,8 +63,8 @@ metrics: out/hub/<slug>/metrics.json
 compare: compare/catalog.json   # filter model / method / instance, then fetch hub_repo_id
 ```
 
-After a successful `--upload`, run **quant-catalog** in this same parent
-session so the library row has model, GPU, method, paper, method repo, and
-Hub links. `publish.py` also writes `hub_url` and
-`compare/contributions/<model>__<gpu>__<method>.json`; the catalog skill is
-the standard for a beneficial run. Docs: `compare/LIBRARY.md`.
+After a successful `--upload`, run **quant-catalog** then **quant-sync** in
+this same parent session so the library row has model, GPU, method, paper,
+method repo, and Hub links, then GitHub and the Hub collection update.
+`publish.py` also writes `hub_url` and
+`compare/contributions/<model>__<gpu>__<method>.json`. Docs: `compare/LIBRARY.md`.

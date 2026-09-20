@@ -615,7 +615,7 @@ def _write_markdown() -> Path:
             "Each row is **model × GPU instance × method**, with links to the paper,",
             "the method GitHub repo, and the Hugging Face weights.",
             "",
-            "How to add a row: `agents/skills/quant-catalog/SKILL.md` and `compare/LIBRARY.md`.",
+            "How to add a row: `agents/skills/quant-sync/SKILL.md` and `compare/LIBRARY.md`.",
             "",
         ]
     )

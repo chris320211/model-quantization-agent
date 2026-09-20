@@ -12,16 +12,24 @@ description: >-
 You are a **subagent**. Do only gather. Read
 [_shared/pipeline_contract.md](../_shared/pipeline_contract.md).
 
-`PY=$(command -v python || command -v python3)`
+`PY=$([ -x .venv/bin/python ] && echo .venv/bin/python || command -v python || command -v python3)`
 `S="$PY agents/skills/_shared/scripts"`
 
 Host-mutating steps need `--allow-unsafe-host-execution` on an isolated box.
 
+Every new shell: if `HF_TOKEN` is unset and `.env` exists,
+`source agents/skills/_shared/load_env.sh .env`. Never read, print, or paste
+values. Do not ask the parent or user mid-stage; finish or fail with the
+request JSON / error.
+
 ## Do
 
 1. Web-search `method_name` for the official paper and official GitHub.
-   Prefer the authors’ repo. If two repos look official, stop and ask once.
-   GitHub URL must be `https://github.com/owner/repo` (no git@, no other hosts).
+   Prefer the authors’ repo. GitHub URL must be `https://github.com/owner/repo`
+   (no git@, no other hosts). If two repos look official, do **not** ask: use
+   the GitHub URL named in the paper (arXiv / PDF “code is available at”),
+   else the repo whose name matches the method, else the paper authors’
+   first-party org. Never a third-party reimplementation when that URL is known.
 2. Download the paper:
 
    ```bash

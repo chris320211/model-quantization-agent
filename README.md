@@ -30,22 +30,25 @@ $S/compare.py --model-id microsoft/Phi-3-mini-4k-instruct --method FlatQuant --f
 ## Contribute a run
 
 After a **beneficial** run (quality_ok and better VRAM or tok/s than fp16):
-`quant-publish`, then `quant-catalog`. Do not commit checkpoints.
+`quant-publish`, `quant-catalog`, then `quant-sync`. Do not commit checkpoints.
 
 1. Upload: `quant-publish --upload --repo-id <you>/<slug>`
 2. Record the standard row (model, GPU, method, paper, repo, Hub):
    `agents/skills/quant-catalog/SKILL.md`
-3. PR `compare/contributions/<model>__<gpu>__<method>.json`
+3. Push GitHub + refresh the Hub collection:
+   `agents/skills/quant-sync/SKILL.md`
 
 ```bash
 PY=$(command -v python || command -v python3)
 S="$PY agents/skills/_shared/scripts"
 $S/compare.py --catalog --job-id <job_id> --request out/requests/<slug>.json \
   --hub-url https://huggingface.co/<you>/<slug>
+$S/sync_remotes.py --push --allow-unsafe-host-execution
 ```
 
-Details: `compare/LIBRARY.md`. After merge, the row ranks against other methods
-on the same model × instance.
+Details: `compare/LIBRARY.md`. After sync, the row ranks against other methods
+on the same model × instance. Third parties without push access PR
+`compare/contributions/<model>__<gpu>__<method>.json`.
 
 ## Agent workflow
 
@@ -78,6 +81,8 @@ Helpers: `agents/skills/_shared/scripts/`. No method catalog inside the agent lo
 10. **quant-catalog** — parent only, after a beneficial run. Writes the standard
     library row (model, GPU instance, method, paper, method repo, Hugging Face)
     into `compare/catalog.json`. See `compare/LIBRARY.md`.
+11. **quant-sync** — parent only. Pushes allowlisted library files to GitHub and
+    refreshes the one Hugging Face collection. Never commits checkpoints.
 
 ## Setup
 

@@ -17,6 +17,7 @@ SKILL_NAMES = (
     "quant-kernel",
     "quant-publish",
     "quant-catalog",
+    "quant-sync",
 )
 REQUIRED_SCRIPTS = (
     "adapter.py",
@@ -38,6 +39,7 @@ REQUIRED_SCRIPTS = (
     "diagnose.py",
     "publish.py",
     "compare.py",
+    "sync_remotes.py",
 )
 
 
@@ -60,11 +62,16 @@ def test_skill_docs_have_no_obsolete_codex_paths():
     assert "compare/" in subagents
     parent = (ROOT / "agents" / "skills" / "quant" / "SKILL.md").read_text()
     assert "quant-catalog" in parent
+    assert "quant-sync" in parent
     catalog = (ROOT / "agents" / "skills" / "quant-catalog" / "SKILL.md").read_text()
     assert "paper_url" in catalog
     assert "repo_url" in catalog
     assert "hub_url" in catalog
     assert "compare/LIBRARY.md" in catalog
+    sync = (ROOT / "agents" / "skills" / "quant-sync" / "SKILL.md").read_text()
+    assert "sync_remotes.py" in sync
+    assert "Never commit" in sync or "never stages" in sync
+    assert "quantized/" in sync
     assert "Retry loop (you)" in parent
     assert "quant-retry" in parent
     assert "every method × model × GPU" in parent
@@ -75,6 +82,7 @@ def test_skill_docs_have_no_obsolete_codex_paths():
     assert "1.5" in diagnose
     gather = (ROOT / "agents" / "skills" / "quant-gather" / "SKILL.md").read_text()
     assert "retry_gpu_jobs_max=2" in gather
+    assert "stop and ask" not in gather
     kernel = (ROOT / "agents" / "skills" / "quant-kernel" / "SKILL.md").read_text()
     assert "pack_i4" in kernel
     assert "Linear4bit" in kernel
@@ -193,7 +201,7 @@ def test_skills_point_at_shared_scripts():
             if marker in text and path.name == "AGENTS.md":
                 continue
             assert marker not in text, f"{path.relative_to(ROOT)} still mentions {marker}"
-    for name in ("quant-gather", "quant-port", "quant-run", "quant-verify", "quant-benchmark", "quant-diagnose", "quant-kernel", "quant-publish", "quant-catalog"):
+    for name in ("quant-gather", "quant-port", "quant-run", "quant-verify", "quant-benchmark", "quant-diagnose", "quant-kernel", "quant-publish", "quant-catalog", "quant-sync"):
         text = (ROOT / "agents" / "skills" / name / "SKILL.md").read_text()
         assert "agents/skills/_shared/scripts" in text
         assert "out/ports/" not in text

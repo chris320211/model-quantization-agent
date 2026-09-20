@@ -10,9 +10,12 @@ description: >-
 
 If the prompt has **no** `strategy:`, you are the **coordinator**.
 If it has `strategy: dispatch|llama_alias|adapter_only|diagnose_fix`, you are a **worker**.
-Request JSON path is required. Never edit the cloned repo.
+Request JSON path is required. Never edit the cloned repo. Do not ask the
+parent mid-stage: skip a strategy that cannot apply, rank what validated,
+write the request JSON, and return. If `HF_TOKEN` is unset and `.env` exists,
+`source agents/skills/_shared/load_env.sh .env` (never print values).
 
-`PY=$(command -v python || command -v python3)`
+`PY=$([ -x .venv/bin/python ] && echo .venv/bin/python || command -v python || command -v python3)`
 `S="$PY agents/skills/_shared/scripts"`
 
 ## Coordinator

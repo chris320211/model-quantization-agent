@@ -1,5 +1,7 @@
 # Subagents
 
+Human overview: root `README.md`. Skill list: `agents/README.md`.
+
 Each stage is a **separate subagent**. The parent (`quant`) only collects the
 three inputs, launches one subagent at a time, and passes the previous return
 value. It does not search, clone, adapt, or run GPU jobs itself.

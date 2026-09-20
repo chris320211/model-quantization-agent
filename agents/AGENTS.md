@@ -1,17 +1,20 @@
 # Agent instructions
 
-This repo has **one** agents folder: `agents/`. Inside it live this file and
-the only skill tree, `agents/skills/`. There is no `.agents/`, `.claude/skills/`,
-or `.cursor/skills/` copy.
+This repo is a **set of skills**. The host AI agent (Cursor, Claude, Codex)
+runs on a GPU instance and follows this tree. There is **one** agents
+folder: `agents/`. Inside it live this file and the only skill tree,
+`agents/skills/`. There is no `.agents/`, `.claude/skills/`, or
+`.cursor/skills/` copy.
 
-On a quantization request (method + Hugging Face model + GPU instance), read
+On a quantization request (method + model + GPU instance), read
 and follow `agents/skills/quant/SKILL.md`. That file is the parent dispatcher.
 
 | Path | Role |
 | --- | --- |
 | `agents/skills/quant/SKILL.md` | Parent loop |
 | `agents/skills/quant-setup/SKILL.md` | `.env` once per machine; load every shell |
-| `agents/skills/quant-gather/` … `quant-publish/` | One stage each |
+| `agents/skills/quant-gather/` … `quant-kernel/` | One GPU-stage skill each |
+| `agents/skills/quant-publish/SKILL.md` | Upload weights to Hugging Face |
 | `agents/skills/quant-catalog/SKILL.md` | Library row after a beneficial run |
 | `agents/skills/quant-sync/SKILL.md` | Push library to GitHub and refresh the Hub collection |
 | `agents/skills/_shared/pipeline_contract.md` | Order, retries, layout |

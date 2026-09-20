@@ -1,5 +1,8 @@
 # Pipeline contract (skills-first)
 
+Human overview: root `README.md`. This file is the **agent** contract
+(order, retries, layout).
+
 User inputs: **method name**, **model name**, **GPU instance**. No method catalog.
 
 Canonical helpers live in `agents/skills/_shared/scripts/`. Every stage skill
@@ -34,7 +37,7 @@ Order:
     better VRAM or tok/s than fp16). Standard row: model, GPU instance, method,
     paper URL, method GitHub, Hugging Face URL. Writes
     `library/contributions/` and rebuilds `library/catalog.json`. Docs:
-    `library/README.md`.
+    `library/LIBRARY.md`.
 12. `quant-sync` in the **parent** after catalog (or when asked to update
     GitHub and Hugging Face). Rebuilds `library/`, `git push`es allowlisted
     library/skill paths to this remote, and refreshes the one Hub collection.
@@ -59,7 +62,7 @@ Required keys:
 | key | meaning |
 | --- | --- |
 | `method_name` | User method string |
-| `model_id` | Hugging Face `org/model` |
+| `model_id` | Model id gather snapshots (usually `org/name`) |
 | `gpu_instance` | e.g. `g5.xlarge` |
 | `arxiv_id` | arXiv id from gather |
 | `paper_path` | `.cache/papers/<id>.txt` |

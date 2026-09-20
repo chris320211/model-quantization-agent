@@ -1,13 +1,20 @@
-# Contribute a successful run
+# Contribute a library row
 
-See `library/README.md`. Weights stay on **your** public Hugging Face repo.
+The ranking is [library/LIBRARY.md](../LIBRARY.md). Quantized weights stay on
+**your** public Hub repo. The collection is
+https://huggingface.co/collections/chris320211/quant-agent-library-6aaf22fcafd69b39eabc9230
 
 Do not commit weight files. Do not edit `catalog.json`.
 
-1. Beneficial WikiText-2 run (`quality_ok` and better VRAM or tok/s than fp16).
-2. `quant-publish --upload --repo-id <you>/<slug>`
-3. `quant-catalog` (writes this JSON).
-4. `quant-sync` (this GitHub remote + Hub collection). Without push access, open a PR.
+A run counts if WikiText-2 stays within 1.5× fp16 perplexity **and** VRAM or
+tok/s beat fp16. Then:
+
+1. `quant-publish` — upload `--repo-id <you>/<slug>`
+2. `quant-catalog` — writes this JSON
+3. `quant-sync` — GitHub + Hub collection. Without push access, open a PR.
+
+`model_id` is the model you quantized (usually `org/name`). It is not limited
+to Microsoft Phi or any one Hub family.
 
 ```bash
 PY=$(command -v python || command -v python3)
@@ -17,19 +24,19 @@ $S/library.py --catalog --job-id <job_id> --request out/requests/<slug>.json \
 $S/library.py --rebuild
 ```
 
-Required in the JSON: `model_id`, `gpu_instance`, `method_name`, `arxiv_id` or
+Required fields: `model_id`, `gpu_instance`, `method_name`, `arxiv_id` or
 `paper_url`, `repo_url` (`https://github.com/owner/repo`), `hub_repo_id`.
 
 ```json
 {
   "schema_version": 1,
-  "model_id": "microsoft/Phi-3-mini-4k-instruct",
+  "model_id": "org/your-model",
   "method_name": "AWQ",
   "gpu_instance": "g5.2xlarge",
   "arxiv_id": "2306.00978",
   "paper_url": "https://arxiv.org/abs/2306.00978",
   "repo_url": "https://github.com/mit-han-lab/llm-awq",
-  "hub_repo_id": "your-org/your-model",
+  "hub_repo_id": "your-org/your-quantized-model",
   "quality_ok": true,
   "ppl": 7.0,
   "ppl_ratio": 1.1,

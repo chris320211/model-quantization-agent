@@ -2,11 +2,13 @@
 name: quant
 description: >-
   Dispatcher for autonomous quantization porting. Use when the user names a
-  quantization method, a Hugging Face model, and a GPU instance (for example
-  AWQ, Qwen2.5 0.5B, g5.xlarge). Launches one subagent per stage.
+  quantization method, a model, and a GPU instance (for example AWQ,
+  Qwen2.5 0.5B, g5.xlarge). Launches one subagent per stage.
 ---
 
 # Quant
+
+Human overview: [README.md](../../../README.md). Skill index: [agents/README.md](../../README.md).
 
 Read [_shared/pipeline_contract.md](../_shared/pipeline_contract.md) and
 [_shared/subagents.md](../_shared/subagents.md) first.
@@ -43,7 +45,7 @@ Then launch **one subagent per stage**, in order. Do not do stage work yourself.
    row to this GitHub remote and refreshes the Hub collection. Do not commit
    weight files. Third parties without push access PR
    `library/contributions/<model>__<gpu>__<method>.json`. Docs:
-   `library/README.md`.
+   `library/LIBRARY.md`.
 
 ## Retry loop (any inputs)
 

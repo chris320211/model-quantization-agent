@@ -17,4 +17,4 @@ jobs:
       - run: python -m pip install -c constraints.txt -e '.[dev]'
       - run: pytest -q -W error
       - run: python agents/skills/_shared/scripts/library.py --rebuild
-      - run: git diff --exit-code -- library/catalog.json library/index.json library/README.md
+      - run: git diff --exit-code -- library/catalog.json library/index.json library/LIBRARY.md

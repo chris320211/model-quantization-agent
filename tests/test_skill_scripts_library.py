@@ -191,7 +191,7 @@ def test_record_job_replaces_same_method_and_ranks_two_methods(tmp_path, monkeyp
     index = json.loads((tmp_path / "library" / "index.json").read_text())
     assert index["groups"][0]["n_methods"] == 2
     assert index["groups"][0]["best_method"] == "FlatQuant"
-    readme = (tmp_path / "library" / "README.md").read_text()
+    readme = (tmp_path / "library" / "LIBRARY.md").read_text()
     assert "microsoft/Phi-3-mini-4k-instruct" in readme
     assert "g5.2xlarge" in readme
     assert "**Best:** FlatQuant" in readme
@@ -321,7 +321,8 @@ def test_quant_skills_point_at_library_index():
     assert "contributions" in publish
     catalog = (ROOT / "agents" / "skills" / "quant-catalog" / "SKILL.md").read_text()
     assert "--catalog" in catalog
-    assert (ROOT / "library" / "README.md").is_file()
+    assert (ROOT / "library" / "LIBRARY.md").is_file()
+    assert not (ROOT / "library" / "README.md").is_file()
     assert "library.json" in publish or "sync-hf-collection" in publish
     sync = (ROOT / "agents" / "skills" / "quant-sync" / "SKILL.md").read_text()
     assert "sync_remotes.py" in sync
@@ -373,7 +374,8 @@ def test_repo_contributions_join_one_library():
     files = list(contrib_dir.glob("*.json"))
     assert files, "expected at least one contribution JSON in the shared library"
     assert not (ROOT / "compare").exists()
-    assert not (ROOT / "library" / "LIBRARY.md").is_file()
+    assert (ROOT / "library" / "LIBRARY.md").is_file()
+    assert not (ROOT / "library" / "README.md").is_file()
     for path in files:
         library_mod.validate_contribution(json.loads(path.read_text()))
     rows = library_mod.query()
@@ -409,7 +411,7 @@ def test_catalog_run_records_standard_links(tmp_path, monkeypatch):
     assert row["model_id"] == "microsoft/Phi-3-mini-4k-instruct"
     assert row["gpu_instance"] == "g5.2xlarge"
     assert row["hub_repo_id"] == "you/flatquant-phi3"
-    readme = (tmp_path / "library" / "README.md").read_text()
+    readme = (tmp_path / "library" / "LIBRARY.md").read_text()
     assert "arxiv.org/abs/2410.09426" in readme
     assert "github.com/ruikangliu/FlatQuant" in readme
     assert "huggingface.co/you/flatquant-phi3" in readme

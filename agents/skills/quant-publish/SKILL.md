@@ -67,4 +67,4 @@ After a successful `--upload`, run **quant-catalog** then **quant-sync** in
 this same parent session so the library row has model, GPU, method, paper,
 method repo, and Hub links, then GitHub and the Hub collection update.
 `publish.py` also writes `hub_url` and
-`library/contributions/<model>__<gpu>__<method>.json`. Docs: `library/README.md`.
+`library/contributions/<model>__<gpu>__<method>.json`. Docs: `library/LIBRARY.md`.

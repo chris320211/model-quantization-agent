@@ -41,7 +41,7 @@ remote URL). Do not run `git config`.
 Third parties without push access still PR
 `library/contributions/<model>__<gpu>__<method>.json`.
 
-Docs: `library/README.md`.
+Docs: `library/LIBRARY.md`.
 
 ## Return
 

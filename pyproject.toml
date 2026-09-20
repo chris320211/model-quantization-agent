@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "quant-agent"
 version = "0.2.0"
-description = "Skills-first autonomous quantization porting for Hugging Face LLMs"
+description = "Skills for your own AI agent on a GPU: port any quantization method onto any model, measure vs fp16, publish beneficial runs."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

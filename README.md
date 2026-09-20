@@ -1,126 +1,104 @@
 # quant-agent
 
-Skills-first porter: name a **quantization method**, a **Hugging Face model**,
-and a **GPU instance**. An agent finds the paper and GitHub repo, clones and
-snapshots onto the box, ports in a reviewable overlay, runs one GPU job,
-verifies the **saved** artifact still generates, and **always** benchmarks LLM
-metrics against the fp16 snapshot.
+This repo is a **set of skills**. You run **your own AI agent** (Cursor,
+Claude Code, Codex, or similar) **on a GPU instance** and use the skills
+in [`agents/skills/`](agents/skills/). There is no separate program to
+launch — the agent reads [`agents/AGENTS.md`](agents/AGENTS.md), then
+follows `quant`. For the full skill list and workflow, see
+[`agents/README.md`](agents/README.md).
+
+Those skills port any quantization **method** onto any **model** on that
+GPU: find the paper and code, adapt the method, run **one** job, check
+that the **saved** weights still generate, and always measure WikiText-2
+against the original fp16 checkpoint (perplexity, tokens/s, VRAM).
+
+You provide three things:
+
+- **method** — e.g. SmoothQuant, AWQ, FlatQuant
+- **model** — any checkpoint gather can snapshot (usually `org/name`; not
+  limited to Microsoft Phi or Hugging Face’s own models)
+- **GPU instance** — e.g. `g5.2xlarge`
+
+```text
+port SmoothQuant to ibm-granite/granite-3.3-2b-instruct on g5.2xlarge
+port AWQ to org/my-instruct on g6e.xlarge
+```
+
+```mermaid
+flowchart LR
+  in["method + model + GPU"] --> run["port and measure vs fp16"]
+  run --> ok{"quality OK and faster or smaller?"}
+  ok -->|yes| lib["library table + published weights"]
+  ok -->|no| report["report metrics"]
+```
+
+Open this repo in your agent on the GPU box and invoke `quant`. It collects
+the three inputs, runs the stages, retries only when diagnose says so, and
+never commits checkpoints.
 
 ## Library
 
-**One library.** Each row is model × GPU instance × method, with links to the
-paper, the method GitHub repo, and Hugging Face weights. Details:
-`library/README.md`.
+Successful runs are ranked here. A run is published when WikiText-2 stays
+within 1.5× fp16 perplexity **and** VRAM or speed beats fp16. The table
+compares methods on the same model × GPU. Rows already in the table
+(Granite, Phi-3, …) are **published examples**, not the set of allowed
+models.
 
-1. Filter `library/catalog.json` by `model_id`, `method_name`, `gpu_instance`.
-2. Compare WikiText-2 PPL / tok/s / VRAM (`is_best` is the pick).
-3. Open paper / method repo / Hub from the row, or `huggingface-cli download <hub_repo_id>`.
-4. Hub collection URL lives in `library/library.json`.
+Hugging Face is where **weights** are stored and downloaded, not which
+models you may quantize.
 
-```bash
-PY=$(command -v python || command -v python3)
-S="$PY agents/skills/_shared/scripts"
-$S/library.py --model-id microsoft/Phi-3-mini-4k-instruct
-$S/library.py --model-id microsoft/Phi-3-mini-4k-instruct --gpu-instance g5.2xlarge --best
-$S/library.py --model-id microsoft/Phi-3-mini-4k-instruct --method FlatQuant --fetch
-```
-
-`--fetch` prints the download command. It does not download.
-
-## Contribute a run
-
-After a **beneficial** run (quality_ok and better VRAM or tok/s than fp16):
-`quant-publish`, `quant-catalog`, then `quant-sync`. Do not commit checkpoints.
-
-1. Upload: `quant-publish --upload --repo-id <you>/<slug>`
-2. Record the standard row (model, GPU, method, paper, repo, Hub):
-   `agents/skills/quant-catalog/SKILL.md`
-3. Push GitHub + refresh the Hub collection:
-   `agents/skills/quant-sync/SKILL.md`
-
-```bash
-PY=$(command -v python || command -v python3)
-S="$PY agents/skills/_shared/scripts"
-$S/library.py --catalog --job-id <job_id> --request out/requests/<slug>.json \
-  --hub-url https://huggingface.co/<you>/<slug>
-$S/sync_remotes.py --push --allow-unsafe-host-execution
-```
-
-Details: `library/README.md`. After sync, the row ranks against other methods
-on the same model × instance. Third parties without push access PR
-`library/contributions/<model>__<gpu>__<method>.json`.
-
-## Agent workflow
-
-Cursor, Claude, and Codex read `agents/AGENTS.md`, then `agents/skills/`.
-Helpers: `agents/skills/_shared/scripts/`. No method catalog inside the agent loop.
-
-`port AWQ to Qwen/Qwen2.5-0.5B-Instruct on g5.xlarge`
-
-1. **quant** (parent) collects the three inputs. **quant-setup** stays in the
-   parent on first load: create `.env` once from `.env.example`, load it every
-   shell. Do not recreate `.env` if it already exists.
-2. **quant-gather** — paper + GitHub, clone, HF snapshot, GPU facts, one venv.
-   Writes `out/requests/<slug>.json`.
-3. **quant-port** — `dispatch` / `llama_alias` / `adapter_only`, validate only,
-   one ranked winner under `out/overlays/`.
-4. **quant-run** — launch with `--allow-unsafe-host-execution`.
-5. **quant-verify** — reload saved weights (not Hub fp16) and require generation.
-6. **quant-benchmark** — always compare WikiText-2 perplexity (and throughput/VRAM)
-   against the original fp16 snapshot.
-7. **quant-diagnose** — classify into typed issue codes. The **parent** runs the
-   same retry loop for every method × model × GPU (`retry_ranked_overlay` /
-   `author_fix` / `kernel`). Default two extra GPU jobs for quality retries;
-   packed-path dtype/eval/prefill follow-ups are helper-capped, not
-   method-specific. Stop only when diagnose says `none`.
-8. **quant-kernel** — only if diagnose says `kernel`. First overlay is complete
-   (pack if the repo has it, plus prefill SDPA/flash).
-9. **quant-publish** — parent only. Stages `out/hub/<slug>/` (weights + WikiText-2
-   `metrics.json` + model card) and uploads to Hugging Face Hub when `HF_TOKEN`
-   is set.
-10. **quant-catalog** — parent only, after a beneficial run. Writes the standard
-    library row (model, GPU instance, method, paper, method repo, Hugging Face)
-    into `library/catalog.json`. See `library/README.md`.
-11. **quant-sync** — parent only. Pushes allowlisted library files to GitHub and
-    refreshes the one Hugging Face collection. Never commits checkpoints.
+- **Ranking (GitHub):** [library/LIBRARY.md](library/LIBRARY.md)
+- **Weights:** [quant-agent collection](https://huggingface.co/collections/chris320211/quant-agent-library-6aaf22fcafd69b39eabc9230)
 
 ## Setup
 
-Isolated NVIDIA GPU host (Deep Learning AMI GPU PyTorch, Ubuntu 22.04, or any
-box with driver + CUDA 12.x, Python ≥ 3.10, git). Suggested: `g5.xlarge` (≤13B),
-`g6e.xlarge` (≤34B), `g5.12xlarge` (≤70B). Torch wheels match this host's nvcc/toolkit
-(`QUANT_AGENT_TORCH_SPEC=torch==X.Y.Z|cuZZZ` to override).
+Use a **disposable** NVIDIA GPU host (driver + CUDA 12.x, Python ≥ 3.10,
+git). The agent runs third-party method code on this machine. Size hints,
+not a whitelist: `g5.xlarge` (≤13B), `g6e.xlarge` (≤34B), `g5.12xlarge`
+(≤70B).
 
 ```bash
-git clone <this repo> && cd model-quantization-agent
+git clone https://github.com/chris320211/model-quantization-agent.git
+cd model-quantization-agent
 PY=$(command -v python || command -v python3)
 "$PY" -m pip install -c constraints.txt -e '.[dev]'
 cp .env.example .env
 chmod 600 .env
-# edit .env in your editor; put HF_TOKEN=... (and optional GITHUB_TOKEN=)
+# edit .env in your editor: HF_TOKEN=...  (optional GITHUB_TOKEN=)
 source agents/skills/_shared/load_env.sh .env
 ```
 
-Create `.env` **once** on this machine. Every new terminal, only `source` the
-loader. Never paste token values into chat. `.env` is gitignored.
+Create `.env` **once**. Every new terminal, only `source` the loader. Never
+paste token values into chat. `.env` is gitignored. `HF_TOKEN` is the Hub
+token for gated downloads and for publishing quantized weights.
 
-Open the repo in Codex, Claude Code, or Cursor and invoke the `quant` skill.
+## Outputs
 
-`--allow-unsafe-host-execution` runs third-party and generated code. Use it only
-on a disposable host. Installers get no cloud credentials; quantize/verify get
-the HF token only when needed.
-
-## Jobs
+| Path | What |
+| --- | --- |
+| `quantized/<slug>` | Saved quantized weights |
+| `jobs/<id>/benchmark.json` | WikiText-2 vs fp16 |
+| `library/LIBRARY.md` | Ranking of published runs |
 
 ```bash
 PY=$(command -v python || command -v python3)
 "$PY" agents/skills/_shared/scripts/jobs.py list
 "$PY" agents/skills/_shared/scripts/jobs.py status <job_id>
 "$PY" agents/skills/_shared/scripts/jobs.py logs <job_id> -n 200
-"$PY" agents/skills/_shared/scripts/jobs.py kill <job_id>
-"$PY" agents/skills/_shared/scripts/library.py \
-  --model-id <org/model> --gpu-instance <instance> --best
 ```
 
-State: `jobs/<id>/`. Weights: `quantized/`. Library: `library/`. Clone:
-`.venvs/<slug>/repo` (never edited). Workspace override: `QUANT_AGENT_WORKSPACE`.
+## Documentation
+
+This README is the short overview. Details live under [`agents/`](agents/):
+
+| Doc | What it covers |
+| --- | --- |
+| [`agents/README.md`](agents/README.md) | Skill list, stage workflow, what each skill does |
+| [`agents/AGENTS.md`](agents/AGENTS.md) | How the agent should start; secret rules |
+| [`agents/skills/quant/SKILL.md`](agents/skills/quant/SKILL.md) | Parent skill — invoke this one |
+| [`agents/skills/_shared/pipeline_contract.md`](agents/skills/_shared/pipeline_contract.md) | Order, retries, on-disk layout |
+| [`agents/skills/_shared/subagents.md`](agents/skills/_shared/subagents.md) | How stages are launched |
+| [`library/LIBRARY.md`](library/LIBRARY.md) | Published ranking table |
+| [`library/contributions/README.md`](library/contributions/README.md) | How to add a library row |
+
+Every skill is a `SKILL.md` in [`agents/skills/`](agents/skills/).

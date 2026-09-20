@@ -67,7 +67,7 @@ def test_skill_docs_have_no_obsolete_codex_paths():
     assert "paper_url" in catalog
     assert "repo_url" in catalog
     assert "hub_url" in catalog
-    assert "library/README.md" in catalog
+    assert "library/LIBRARY.md" in catalog
     sync = (ROOT / "agents" / "skills" / "quant-sync" / "SKILL.md").read_text()
     assert "sync_remotes.py" in sync
     assert "Never commit" in sync or "never stages" in sync

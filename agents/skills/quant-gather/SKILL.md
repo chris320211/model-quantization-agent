@@ -2,9 +2,9 @@
 name: quant-gather
 description: >-
   Find a quantization method’s paper and GitHub from the method name, clone the
-  repo, download the Hugging Face model, record GPU facts, and install one
-  method venv. Use as a quant-gather subagent. No method catalog. Does not
-  adapt or launch GPU jobs.
+  repo, snapshot the named model’s weights (typically Hub org/name), record GPU
+  facts, and install one method venv. Use as a quant-gather subagent. No method
+  catalog. Does not adapt or launch GPU jobs.
 ---
 
 # Quant Gather
@@ -45,7 +45,8 @@ request JSON / error.
      --allow-unsafe-host-execution
    ```
 
-4. Snapshot the Hugging Face model (uses `HF_TOKEN` from the environment; never print it):
+4. Snapshot the named model (uses `HF_TOKEN` from the environment when the
+   download is gated or Hub-hosted; never print it):
 
    ```bash
    $S/snapshot.py --model-id <org/model>

@@ -2,7 +2,7 @@
 name: quant-setup
 description: >-
   On first load of this repo, ask the user to create a mode-600 `.env` with
-  their secrets (Hugging Face, optional GitHub). Load it every shell. Use in
+  their secrets (Hub token, optional GitHub). Load it every shell. Use in
   the parent session only. Never accept, reveal, or manipulate secret values
   through chat.
 ---
@@ -22,7 +22,7 @@ to recreate `.env` if it already exists.
 - **Interpreter:** `PY=$([ -x .venv/bin/python ] && echo .venv/bin/python || command -v python || command -v python3)`. Deep Learning
   AMI / Ubuntu GPU hosts often have `python3` only. Install helper deps once:
   `"$PY" -m pip install -c constraints.txt -e '.[dev]'`.
-- **Model access:** gated Hugging Face models and Hub publish need `HF_TOKEN`
+- **Model access:** gated checkpoints and Hub publish need `HF_TOKEN`
   in `.env`. The loader also exports `HUGGINGFACE_HUB_TOKEN` from that one value.
 - **Repository access:** `GITHUB_TOKEN` is optional (API rate limits). `git push`
   uses Git's credential helper, not `.env`.

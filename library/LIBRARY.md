@@ -19,7 +19,6 @@ GPU: NVIDIA A10G
 | Model | GPU | Method | Paper | Repo | Hugging Face | PPL ratio | tok/s | VRAM GB |
 | --- | --- | --- | --- | --- | --- | ---: | ---: | ---: |
 | Qwen/Qwen2.5-1.5B-Instruct | g5.2xlarge | SmoothQuant | [paper](https://arxiv.org/abs/2211.10438) | [repo](https://github.com/mit-han-lab/smoothquant) | [hub](https://huggingface.co/chris320211/smoothquant-qwen25-15b-g52xlarge) | 1.0509 | 10427.5 | 4.682 |
-| Qwen/Qwen2.5-1.5B-Instruct | g5.2xlarge | QuaRot | [paper](https://arxiv.org/abs/2404.00456) | [repo](https://github.com/spcl/QuaRot) |  | 1.5826 | 3600.8 | 4.405 |
 
 **Best:** SmoothQuant (`smoothquant-qwen25-15b-g52xlarge`).
 

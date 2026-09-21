@@ -5,7 +5,7 @@
       "model_id": "Qwen/Qwen2.5-1.5B-Instruct",
       "gpu_instance": "g5.2xlarge",
       "gpu_name": "NVIDIA A10G",
-      "n_methods": 2,
+      "n_methods": 1,
       "best_method": "SmoothQuant"
     },
     {

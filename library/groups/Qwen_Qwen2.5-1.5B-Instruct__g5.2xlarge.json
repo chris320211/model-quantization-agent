@@ -29,27 +29,6 @@
       "repo_commit": "c61476d728e42ae0d8a35e7e78494edcac3237b5",
       "verification_status": "passed",
       "rank": 1
-    },
-    {
-      "method_name": "QuaRot",
-      "slug": "quarot-qwen25-15b-g52xlarge",
-      "job_id": "20260920T211203Z-4575fe",
-      "quality_ok": false,
-      "ppl": 15.159791953282856,
-      "ppl_ratio": 1.5825907993894115,
-      "tokens_per_s": 3600.7927261982077,
-      "peak_vram_gb": 4.404787540435791,
-      "improved_throughput": false,
-      "improved_vram": true,
-      "packed": false,
-      "artifact_dir": "quantized/quarot-qwen25-15b-g52xlarge",
-      "hub_url": null,
-      "arxiv_id": "2404.00456",
-      "paper_url": "https://arxiv.org/abs/2404.00456",
-      "repo_url": "https://github.com/spcl/QuaRot",
-      "repo_commit": "5008669b08c1f11f9b64d52d16fddd47ca754c5a",
-      "verification_status": "passed",
-      "rank": 2
     }
   ],
   "best": {

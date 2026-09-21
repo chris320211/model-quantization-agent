@@ -3,8 +3,9 @@ name: quant-setup
 description: >-
   On first load of this repo, ask the user to create a mode-600 `.env` with
   their secrets (Hub token, optional GitHub). Load it every shell. Use in
-  the parent session only. Never accept, reveal, or manipulate secret values
-  through chat.
+  the parent session only (the parent quant skill reads this). Never accept,
+  reveal, or manipulate secret values through chat.
+disable-model-invocation: true
 ---
 
 # Quant Setup
@@ -24,8 +25,9 @@ to recreate `.env` if it already exists.
   `"$PY" -m pip install -c constraints.txt -e '.[dev]'`.
 - **Model access:** gated checkpoints and Hub publish need `HF_TOKEN`
   in `.env`. The loader also exports `HUGGINGFACE_HUB_TOKEN` from that one value.
-- **Repository access:** `GITHUB_TOKEN` is optional (API rate limits). `git push`
-  uses Git's credential helper, not `.env`.
+- **Repository access:** `GITHUB_TOKEN` is optional. Public clones use HTTPS.
+  `quant-sync` `git push` uses Git's credential helper, or `GITHUB_TOKEN`
+  via `git_askpass.sh` when that key is loaded.
 
 Never extract ChatGPT cookies or OAuth tokens, copy credentials from browser
 storage, or put tokens in generated scripts, overlays, or job metadata.
@@ -48,7 +50,8 @@ chmod 600 .env
 Then they edit `.env` in their editor (not chat) and paste:
 
 - `HF_TOKEN` — Hugging Face write token (gated models + `quant-publish`)
-- `GITHUB_TOKEN` — optional; GitHub API rate limits for clones
+- `GITHUB_TOKEN` — optional; GitHub API rate limits for clones, and
+  `quant-sync` push via `git_askpass.sh`
 
 Keys live in `.env.example`. `.env` is gitignored.
 
@@ -84,7 +87,8 @@ Do not echo the value.
   publish (read is enough for gated download); do not relaunch until access
   changes.
 - GitHub `401`: remove or replace the optional token; public clones still use
-  HTTPS GitHub URLs. `git push` 403 is Git credential-helper scope, not `.env`.
+  HTTPS GitHub URLs. `git push` 403: credential-helper scope, or
+  `GITHUB_TOKEN` via `git_askpass.sh` if that is how `quant-sync` is pushing.
 - Codex/Claude/Cursor subscription limit: wait for reset or switch backend.
 
 ## Security invariants

@@ -1,20 +1,24 @@
 ---
 name: quant-diagnose
 description: >-
-  After a completed run whose benchmark did not beat the fp16 baseline,
-  classify why (script, checkpoint, WikiText-2 metrics) and recommend a
-  bounded fix: retry the next ranked overlay, author a targeted overlay
-  patch, or hand off to quant-kernel. Use as a quant-diagnose subagent.
+  After a failed quant-run (no verify), a failed quant-verify, or after every
+  passed quant-benchmark, classify the job (script, checkpoint, logs,
+  WikiText-2 metrics) and set recommended_action. A crashed GPU process or
+  failed WikiText-2 is not none. Includes successful benchmarks so stop is
+  recommended_action: none. Use only as a quant-diagnose subagent launched by
+  the parent quant skill. Does not write overlays or launch GPU jobs.
+disable-model-invocation: true
 ---
 
 # Quant Diagnose
 
-You are a **subagent**. Do only diagnose (and a **validate-only** overlay patch
-if the helper says `author_fix`). Need `job_id` and the request JSON.
-Do not launch a GPU job. Do not invent a retry loop; the parent executes
-`recommended_action` with a GPU budget. The helper is **method-agnostic**:
-same issue codes for every method × model × GPU. Do not ask the parent
-mid-stage. If `HF_TOKEN` is unset and `.env` exists,
+You are a **subagent**. Do only diagnose: run the helper and return its JSON.
+Need `job_id` and the request JSON. Do **not** write an overlay. Do not launch
+a GPU job. Do not invent a retry loop; the parent executes
+`recommended_action` with a GPU budget (`author_fix` → one port worker
+`strategy: diagnose_fix`). The helper is **method-agnostic**: same issue codes
+for every method × model × GPU. Do not ask the parent mid-stage. If
+`HF_TOKEN` is unset and `.env` exists,
 `source agents/skills/_shared/load_env.sh .env` (never print values).
 
 `PY=$([ -x .venv/bin/python ] && echo .venv/bin/python || command -v python || command -v python3)`
@@ -51,9 +55,16 @@ Known **specific** issues and **typed** `issue_codes`:
 | `packed_quality_gap` | `packed_quality_gap` | Packed artifact, eval flags already restored, WikiText-2 still above 1.5×. Do not restore flags again. Start from `best_overlay_dir`. If the repo has a weight-only / fp16-activation class, try that official path. |
 | `prefill_kernel_missing` | `prefill_kernel_missing` | Packed GEMM is saved but attention is still naive matmul (or T+quant is still unfused Python). WikiText-2 tok/s is 2048 prefill. |
 | `ppl_ratio_exploded` | `ppl_exploded` | WikiText-2 PPL ≥ 3× fp16. |
+| `loader_arch` | `loader_arch` | Unpacked artifact failed verify. Next ranked overlay, not kernel. |
+| `process_failed` | `process_failed` | GPU quantize process crashed, timed out, or was killed before verify. Retry an untried keep-runtime overlay, or `author_fix` from `error_excerpt`. Concrete exceptions (missing `flash_attn`, CPU vs CUDA) are `author_fix`, not none. |
+| `benchmark_failed` | `benchmark_failed` | WikiText-2 helper failed after a passed generate-smoke. Missing comparison is not none. |
+| `oom_same_config` | `oom_same_config` | CUDA OOM at this config. Do not retry. |
 | `vram_unchanged` / `throughput_unchanged` | same | No efficiency win. |
 
-## Fix policy (bounded)
+## Recommendations (helper → parent)
+
+You return the helper JSON. You do **not** author overlays. The parent
+switches only on `recommended_action`:
 
 1. **`retry_ranked_overlay`** — helper picks an untried overlay (port `ranked`
    **plus** `out/overlays/<slug>/diagnose_fix/*`) that **keeps method runtime**
@@ -61,20 +72,13 @@ Known **specific** issues and **typed** `issue_codes`:
    export. Return `next_overlay_dir` and `next_script`. The **parent** runs one
    `quant-run`. Budget exhausted still fills `next_overlay_dir` if a candidate
    exists.
-2. **`author_fix`** — no remaining overlay keeps runtime, and retry budget
-   remains. Author a new overlay with strategy `diagnose_fix` using
-   `overlay.py write` + `apply-check` + `validate_script.py` +
-   `adapter.py --check-hub-id`. Do not compile CUDA. Keep-runtime pattern
-   (any method): save the method's transform/clip/packed payload plus an
-   inference adapter that reloads **that artifact**, reapplies the method
-   wrappers, and evals **with wrappers still on**. Do not copy inner
-   `.linear.weight` into vanilla HF. Read `issue_codes`, `error_excerpt`,
-   `notes`, and `prior_issue_codes` from diagnose JSON; also tail the job
-   stderr. Patch the **last exception**, not a generic packed overlay. Do
-   not retune from raw PPL. If `packed_quality_gap`, start from
-   `best_overlay_dir` (not a regressed last overlay). Do not restore eval
-   flags again. If the cloned repo has a weight-only or fp16-activation class
-   versus an activation-quant class, try that official path on packed weights.
+2. **`author_fix`** — no remaining overlay keeps runtime, and a GPU job is
+   still allowed (retry budget remains, **or** packed-path overage when
+   remaining is 0). Return `author_fix` with empty `next_overlay_dir`. The
+   **parent** launches one port worker `strategy: diagnose_fix` (validate only). That
+   worker uses `overlay.py write` + `apply-check` + `validate_script.py` +
+   `adapter.py --check-hub-id` and reads `error_excerpt` / `notes` /
+   `prior_issue_codes`. Do not compile CUDA here. Do not retune from raw PPL.
 3. **`kernel`** — quality is inside the 1.5× gate but the run is still dense
    fakequant, VRAM-flat, slower tokens/s, or packed GEMM without a prefill
    kernel (`prefill_kernel_missing`). Parent launches `quant-kernel`. The
@@ -87,7 +91,11 @@ Known **specific** issues and **typed** `issue_codes`:
    that casts scales — not “kernel already tried, stop” and not the next dense
    ranked overlay. Packed-path fixes may be recommended even when
    `retry.remaining` is 0 (overage cap in the helper).
-4. **`none`** — budget exhausted, or nothing left to try. Report and stop.
+4. **`none`** — stop. Includes success (quality_ok and efficiency already
+   done, or kernel/prefill complete), budget exhausted, terminal OOM/auth/disk,
+   or nothing left to try. A failed GPU process or failed WikiText-2 is **not**
+   none while retries remain. Parent then publishes only if the last benchmark
+   is beneficial.
 
 Do not retry OOM-at-same-config, gated auth, or disk full. Never edit `.venvs/<slug>/repo`.
 

@@ -3,8 +3,10 @@ name: quant-benchmark
 description: >-
   After a passed quant-verify, always compare LLM metrics for the saved
   quantized artifact against the original fp16 Hugging Face snapshot on this
-  GPU. Use as a quant-benchmark subagent. WikiText-2 perplexity is required;
-  VRAM-only smoke is not this stage.
+  GPU. Use only as a quant-benchmark subagent launched by the parent quant
+  skill. WikiText-2 perplexity is required; VRAM-only smoke is not this stage.
+  Does not write library/catalog.json.
+disable-model-invocation: true
 ---
 
 # Quant Benchmark
@@ -35,9 +37,10 @@ The helper **always** evaluates both sides on the same WikiText-2 test corpus:
    window first). Packed CUDA/Triton kernels compile on the first forward;
    do not treat that compile as the throughput result.
 4. Writes `jobs/<job_id>/benchmark.json` and `metrics` on the job.
-5. Records the method onto `library/catalog.json` and
-   `library/groups/<model>__<gpu>.json` so library users can filter
-   model / method / instance. Hugging Face Hub is not this index.
+
+Do **not** record onto `library/catalog.json`. Failed and non-beneficial
+WikiText-2 jobs stay off the public board. `quant-catalog` writes the row
+after a beneficial publish.
 
 Do not skip the fp16 side. Do not invent a different dataset unless the user
 named one; the default is WikiText-2 test, 2048-token windows, 65536 tokens.
@@ -53,8 +56,7 @@ quality_ok: <ratio <= 1.5>
 peak_vram_gb: <quant> vs <fp16>
 tokens_per_s: <quant> vs <fp16>
 efficiency_improved: <vram or throughput better>
-compare_best_method: <method_name or none>
-library_path: library/groups/<model>__<gpu>.json
+compare_best_method: <method_name or none from existing library query>
 ```
 
 If the helper fails, return `failed` and the structured skill-step report.

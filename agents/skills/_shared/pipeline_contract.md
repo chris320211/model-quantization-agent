@@ -23,16 +23,20 @@ Order:
     `.env` if it exists. Session `export` is fallback only.
 2. `quant-gather` subagent — paper + GitHub + clone + HF snapshot + GPU facts + **one** venv install
 3. `quant-port` coordinator — up to three named strategy subagents; validate; pick a winner (no GPU yet)
-4. `quant-run` subagent — launch with retry loops
+4. `quant-run` subagent — one GPU launch per job; no inner overlay patches
 5. `quant-verify` subagent — saved artifact must generate (not Hub fp16)
 6. `quant-benchmark` subagent — **always** WikiText-2 LLM metrics vs the fp16 snapshot
-7. `quant-diagnose` subagent — if quality or efficiency did not improve; classify and recommend a fix
+7. `quant-diagnose` subagent — after a failed run (no verify), after every
+   verify, and after every passed benchmark (including success) so stop is
+   `recommended_action: none`. A crashed GPU job or failed WikiText-2 is not
+   `none` while retries remain (unless OOM/auth/disk).
 8. Parent **retry loop** (not a new skill): switch on diagnose `recommended_action` with a GPU budget
 9. `quant-kernel` only if diagnose says `kernel`
-10. `quant-publish` in the **parent** after verify + `quality_ok` (Hub model
-    card + weights + WikiText-2 metrics). Uses `HF_TOKEN` like `quant-setup`;
-    never a subagent. Hugging Face Hub is the **artifact store** (one repo per
-    method × model run). It is not the comparison UI.
+10. `quant-publish` in the **parent** after verify + `quality_ok` **and** a
+    VRAM or tok/s win versus fp16 (Hub model card + weights + WikiText-2
+    metrics). Uses `HF_TOKEN` like `quant-setup`; never a subagent. Hugging
+    Face Hub is the **artifact store** (one repo per method × model run). It
+    is not the comparison UI.
 11. `quant-catalog` in the **parent** after a **beneficial** run (quality_ok and
     better VRAM or tok/s than fp16). Standard row: model, GPU instance, method,
     paper URL, method GitHub, Hugging Face URL. Writes
@@ -79,7 +83,7 @@ The parent retry loop may add `tried_overlays`, `retry_gpu_jobs_used`,
 `best_job_id`, `best_overlay_dir`, `best_ppl_ratio` (lowest WikiText-2
 ratio so the next `diagnose_fix` starts from the best overlay, not a
 regression).
-Gather/`request.py` seeds used=0, max=2, and an empty `tried_overlays` list
+Gather/`request.py` seeds used=0, max=14, and an empty `tried_overlays` list
 for every new slug.
 
 ## Layout
@@ -107,9 +111,11 @@ for every new slug.
 - Verify must reload the **saved** quantized artifact, not the Hub snapshot.
 - `quant-benchmark` always compares WikiText-2 perplexity (and throughput/VRAM)
   for that artifact against the original fp16 snapshot. `verify.py --baseline`
-  is not a substitute.
+  is not a substitute. Benchmark does **not** write `library/`; only
+  `quant-catalog` records a beneficial row.
 - Benchmark measures; diagnose classifies; the **parent** retries. Do not fold
-  GPU relaunch into benchmark or diagnose.
+  GPU relaunch into run, benchmark, or diagnose. `quant-run` launches once.
+- `compare.py` is a back-compat alias of `library.py`. Skills call `library.py`.
 - A ranked overlay that **saves vanilla `nn.Linear` / copies `.linear.weight`**
   after `reparameterize_model` still drops method runtime (`T(x)`). Diagnose
   must skip it (`drops_runtime`) and `author_fix` a keep-runtime overlay.
@@ -173,11 +179,11 @@ Budget (method/model/GPU-agnostic — same numbers for AWQ, FlatQuant, GPTQ, …
 | `recommended_action` | Parent does |
 | --- | --- |
 | `retry_ranked_overlay` | One `quant-run` on `next_overlay_dir`, then verify + benchmark (benchmark only if verify passed). Record the overlay on `tried_overlays` and increment `retry_gpu_jobs_used`. |
-| `author_fix` | One validate-only `diagnose_fix` overlay (issue codes + `error_excerpt`, not raw PPL), then one `quant-run` if budget remains. |
+| `author_fix` | One validate-only port worker `strategy: diagnose_fix` (issue codes + `error_excerpt`, not raw PPL), then one `quant-run` if budget remains. Diagnose does not write the overlay. |
 | `kernel` | `quant-kernel` when diagnose says so. Parent does not inspect the overlay for SDPA. Packed GEMM-only is `prefill_kernel_missing`, not a stop. A packed kernel that failed verify is not a stop. |
 | `none` | Stop. Report the WikiText-2 metric table from `benchmark.json` plus `diagnose.json`. |
 
-After each retry: if verify failed, diagnose again (no benchmark). After a
+After each retry: if run or verify failed, diagnose again (no benchmark). After a
 passed verify, benchmark, then **always** diagnose (including on success, so
 `recommended_action` is `none`). Stop only on `none`. Packed-path
 `author_fix` / `kernel` may run when `retry.remaining` is 0; the helper
@@ -189,6 +195,8 @@ Typed issue codes (stable across methods):
 | code | Meaning |
 | --- | --- |
 | `loader_arch` | Unpacked artifact will not load as this model (verify). Next ranked overlay. |
+| `process_failed` | GPU quantize process crashed/timed out before verify. Retry untried keep-runtime overlay, or `author_fix` from `error_excerpt`. |
+| `benchmark_failed` | WikiText-2 helper failed after generate-smoke passed. Not a stop. |
 | `cuda_kernel_dtype_mismatch` | Packed CUDA GEMM/dequant asserts fp16 scales. Cast after pack and load; stay packed. |
 | `packed_loader_failed` | Packed artifact failed verify. Stay on packed path; do not retry dense ranked overlays. |
 | `eval_runtime_flags_missing` | Packed/fused load skipped `_eval_mode` / `use_diag=False`; transforms apply twice. Only if the current overlay does not already restore those flags. |

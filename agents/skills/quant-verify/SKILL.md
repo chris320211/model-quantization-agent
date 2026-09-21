@@ -2,9 +2,11 @@
 name: quant-verify
 description: >-
   Reload a completed quantization job’s saved artifact and require prompt
-  generation. Use as a quant-verify subagent after quant-run. Loader bugs go
-  back to the next ranked overlay; do not treat process exit 0 as success.
-  LLM metric comparison against fp16 is quant-benchmark, not this skill.
+  generation. Use only as a quant-verify subagent launched by the parent quant
+  skill after quant-run. Loader bugs go back to the next ranked overlay; do
+  not treat process exit 0 as success. LLM metric comparison against fp16 is
+  quant-benchmark, not this skill.
+disable-model-invocation: true
 ---
 
 # Quant Verify

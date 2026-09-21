@@ -25,7 +25,9 @@ REQUIRED_SCRIPTS = (
     "clone.py",
     "env.py",
     "gpu.py",
+    "git_askpass.sh",
     "install_venv.py",
+    "io_utils.py",
     "jobs.py",
     "launch.py",
     "overlay.py",
@@ -33,7 +35,9 @@ REQUIRED_SCRIPTS = (
     "paths.py",
     "refuse.py",
     "request.py",
+    "runtime_pins.py",
     "snapshot.py",
+    "torch_spec.py",
     "validate_script.py",
     "verify.py",
     "diagnose.py",
@@ -83,6 +87,11 @@ def test_skill_docs_have_no_obsolete_codex_paths():
     diagnose = (ROOT / "agents" / "skills" / "quant-diagnose" / "SKILL.md").read_text()
     assert "method-agnostic" in diagnose
     assert "1.5" in diagnose
+    assert "write an overlay" in diagnose
+    assert "validate-only overlay patch" not in diagnose
+    run = (ROOT / "agents" / "skills" / "quant-run" / "SKILL.md").read_text()
+    assert "Bounded retries (3)" not in run
+    assert "invent an overlay patch" in run
     gather = (ROOT / "agents" / "skills" / "quant-gather" / "SKILL.md").read_text()
     assert "retry_gpu_jobs_max=14" in gather
     assert "stop and ask" not in gather
@@ -101,6 +110,9 @@ def test_skill_docs_have_no_obsolete_codex_paths():
     assert "recommended_action" in parent
     assert "inspect overlay" in parent or "Never inspect overlay" in parent
     assert "cuda_kernel_dtype_mismatch" in diagnose
+    assert "process_failed" in diagnose
+    assert "benchmark_failed" in diagnose
+    assert "failed quant-run" in diagnose
     port = (ROOT / "agents" / "skills" / "quant-port" / "SKILL.md").read_text()
     assert "cast_linear4bit_kernel_dtypes" in port or "float16" in kernel
     assert "quantized_save" in port
@@ -110,10 +122,14 @@ def test_skill_docs_have_no_obsolete_codex_paths():
     assert "packed_quality_gap" in contract
     assert "best_overlay_dir" in contract
     assert "cuda_kernel_dtype_mismatch" in contract
+    assert "process_failed" in contract
+    assert "benchmark_failed" in contract
     assert "library/" in contract
     assert "catalog.json" in contract
     assert "contributions" in contract
     assert "model_id" in contract and "gpu_instance" in contract
+    assert "max=2" not in contract
+    assert "seeds used=0, max=14" in contract
     publish = (ROOT / "agents" / "skills" / "quant-publish" / "SKILL.md").read_text()
     assert "library/" in publish
     assert "artifact store" in publish.lower() or "not the comparison" in publish.lower()
@@ -236,3 +252,19 @@ def test_obsolete_catalog_product_is_gone():
     readme = (ROOT / "README.md").read_text()
     assert "quant-agent ask" not in readme
     assert "quant-agent setup" not in readme
+
+
+def test_child_skills_disable_model_invocation():
+    parent = (ROOT / "agents" / "skills" / "quant" / "SKILL.md").read_text()
+    assert "disable-model-invocation: true" not in parent
+    for name in SKILL_NAMES:
+        if name == "quant":
+            continue
+        text = (ROOT / "agents" / "skills" / name / "SKILL.md").read_text()
+        assert "disable-model-invocation: true" in text, name
+        assert (
+            "Use only as a quant-" in text
+            or "as a quant-" in text
+            or "parent session only" in text
+            or "Not a subagent" in text
+        ), name

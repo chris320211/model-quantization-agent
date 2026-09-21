@@ -23,6 +23,8 @@ value. It does not search, clone, adapt, or run GPU jobs itself.
 - **Port is the exception:** the port coordinator launches up to three *named*
   strategy subagents at once (author + validate only). The parent still runs
   **one** GPU job, using the winner, then the next ranked overlay if verify fails.
+- `quant-run` launches **once**. Process failures return `failed`; the parent
+  diagnoses. Do not spawn a run subagent that patches overlays.
 - If a subagent fails, stop or retry **that** stage. Do not silently skip ahead.
 - Scripts: `"$PY" agents/skills/_shared/scripts/<name>.py` with
   `PY=$([ -x .venv/bin/python ] && echo .venv/bin/python || command -v python || command -v python3)`.
@@ -90,13 +92,13 @@ job_id: <job_id>
 Do only benchmark. Return quantized vs fp16 WikiText-2 metrics.
 ```
 
-## Example (diagnose — after a failed benefit check)
+## Example (diagnose — after failed run / every verify / passed benchmark)
 
 ```text
 Read agents/skills/quant-diagnose/SKILL.md and follow it.
 Request JSON: out/requests/awq-qwen25-05b-g5xlarge.json
 job_id: <job_id>
-Do only diagnose. Return root_cause, issue_codes, action, and next overlay if any.
+Do only diagnose. Return the helper JSON. Do not write an overlay.
 ```
 
 ## Example (parent retry — typed diagnose feedback)
@@ -113,10 +115,11 @@ diagnose_json: jobs/<job_id>/diagnose.json
 Do only run. Return job_id.
 ```
 
-Then verify + (if passed) benchmark that new `job_id`. If verify failed,
-diagnose without benchmark. **Always** diagnose after a passed benchmark
-(including success) and switch only on `recommended_action`. Stop on `none`.
-Do not inspect overlays for SDPA or fused-kernel names. Packed-path
+Then verify + (if passed) benchmark that new `job_id`. If the run or verify
+failed, diagnose without benchmark. **Always** diagnose after a passed
+benchmark (including success) and switch only on `recommended_action`. Stop on
+`none`. A failed GPU process is `author_fix` / `retry_ranked_overlay`, not
+`none`. Do not inspect overlays for SDPA or fused-kernel names. Packed-path
 `kernel` / `author_fix` may run when `retry.remaining` is 0; the helper
 owns the cap. `kernel` is efficiency after quality is OK, for any method.
 A packed kernel that failed verify with `cuda_kernel_dtype_mismatch` is still

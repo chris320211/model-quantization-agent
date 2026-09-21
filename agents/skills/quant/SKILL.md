@@ -54,19 +54,26 @@ Phi-3, or A10G special case. Do not skip diagnose. Do not invent a
 method-specific shortcut. Do not write overlays, apply patches, or run GPU
 smokes yourself — only launch stage subagents.
 
-After **every** verify (pass or fail) launch `quant-diagnose` (no benchmark if
-verify failed). After **every** passed benchmark launch `quant-diagnose` even
-when `quality_ok` and `efficiency_improved` are already true, so stop is
-file-driven (`recommended_action: none`). Then execute **only**
+After a **failed** run launch `quant-diagnose` (no verify). After a **failed**
+verify launch `quant-diagnose` (no benchmark). After **every**
+passed benchmark launch `quant-diagnose` even when `quality_ok` and
+`efficiency_improved` are already true, so stop is file-driven
+(`recommended_action: none`). A crashed GPU process is not `none`. Do not
+diagnose a passed verify before WikiText-2. Then execute **only**
 `recommended_action` from `jobs/<job_id>/diagnose.json`. Never inspect overlay
 text for SDPA/`kron_matmul`. Never paste WikiText-2 PPL tables or retune from
-raw PPL. Always pass `diagnose.json` and `parent_job_id`. Port/run workers
-**must** read `error_excerpt`, `notes`, `issue_codes`, and the parent job
-stderr, and patch **that** traceback. Typed codes alone are not a fix if the
-excerpt names a concrete exception (missing `flash_attn`, CPU vs CUDA, …).
+raw PPL. Always pass `diagnose.json` and `parent_job_id`. The port
+`diagnose_fix` worker and `quant-kernel` **must** read `error_excerpt`,
+`notes`, `issue_codes`, and the parent job stderr, and patch **that**
+traceback. `quant-run` launches once and does not patch overlays. Typed codes
+alone are not a fix if the excerpt names a concrete exception (missing
+`flash_attn`, CPU vs CUDA, …).
 
 ```text
 job = winner run
+if run failed:
+  diagnose(job)   # no verify/benchmark
+  goto HANDLE
 verify(job)
 if verify failed:
   diagnose(job)   # no benchmark
@@ -85,6 +92,8 @@ HANDLE:
   elif action == kernel:
       overlay = quant-kernel; job = quant-run(kernel overlay)
   record-retry(tried overlay, new job_id, diagnose path)
+  if run failed:
+    diagnose(job); goto HANDLE
   verify(job)
   if verify failed: diagnose(job); goto HANDLE
   benchmark(job)
@@ -114,7 +123,7 @@ A second kernel is only for `prefill_kernel_missing`.
 | `retry_ranked_overlay` | `quant-run` with `next_overlay_dir` / `next_script`, `parent_job_id`, `issue:` from `issue_codes`, and `diagnose_json` (worker reads `error_excerpt`). Then verify; benchmark only if verify passed. |
 | `author_fix` | One port-style worker `strategy: diagnose_fix` with `issue:` codes, `diagnose.json` (`error_excerpt` + `notes` + `prior_issue_codes`), and parent job stderr (validate only). Then one `quant-run` if diagnose still wants a GPU job. |
 | `kernel` | `quant-kernel` only when diagnose says so (quality OK, efficiency not, or `prefill_kernel_missing`). Not a quality retry. |
-| `none` | Stop and report the metric table (Report below). |
+| `none` | Stop and report the metric table (Report below). Helper returns this for success, budget exhausted, or terminal OOM/auth/disk — not for a crashed GPU process or failed WikiText-2 while retries remain. |
 
 After a retry job starts:
 
@@ -149,12 +158,14 @@ Script: <winner_script>
 Do only run. Return job_id.
 ```
 
-Then verify with that `job_id` and the same request JSON. If verify fails,
-launch `quant-diagnose` (no benchmark). Packed CUDA scale asserts stay on
-the packed path; only unpacked `loader_arch` may try the next ranked overlay.
-Then **always** launch `quant-benchmark` after a **passed** verify (do not skip,
-do not replace it with `verify --baseline`). Enter the retry loop above. Kernel
-only if diagnose says `kernel`. When the loop stops, print the Report table.
+Then verify with that `job_id` and the same request JSON. If **run** failed
+(process exit non-zero, no artifact), launch `quant-diagnose` (no verify). If
+verify fails, launch `quant-diagnose` (no benchmark). Packed CUDA scale asserts
+stay on the packed path; only unpacked `loader_arch` may try the next ranked
+overlay. Then **always** launch `quant-benchmark` after a **passed** verify (do
+not skip, do not replace it with `verify --baseline`). Enter the retry loop
+above. Kernel only if diagnose says `kernel`. When the loop stops, print the
+Report table.
 
 ## Report
 

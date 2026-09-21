@@ -1,9 +1,12 @@
 ---
 name: quant-kernel
 description: >-
-  After a verified run that did not beat the baseline, rewrite hot paths to
-  Triton using the paper, repo, and this GPU type. Use as a quant-kernel
-  subagent. Keep the rewrite only if generate still works and speed improves.
+  Rewrite hot paths to Triton only when WikiText-2 quality_ok is true and the
+  parent quant skill passed recommended_action: kernel (dense fakequant, VRAM,
+  tokens/s, or prefill_kernel_missing). Use only as a quant-kernel subagent
+  launched by the parent. Do not run on a quality failure. Validate-only;
+  parent runs the GPU job.
+disable-model-invocation: true
 ---
 
 # Quant Kernel
@@ -24,8 +27,7 @@ this GPU type. Do not ask the parent mid-stage. If `HF_TOKEN` is unset and
 
 1. Profile hot Python/CUDA ops from the completed job logs **and**
    `jobs/<job_id>/diagnose.json` `error_excerpt` / `notes` (do not edit the clone).
-   The kernel overlay must also fix that traceback if verify/process failed
-   with a packed dtype or loader error.
+   Packed dtype/loader verify failures are parent `author_fix`, not this stage.
 2. Reread the paper (`paper_path`) and repo for what the method is supposed to do,
    plus `gpu_arch` from the request JSON.
 3. Rewrite those ops to **Triton** (small CUDA only if Triton cannot express the
@@ -68,8 +70,7 @@ this GPU type. Do not ask the parent mid-stage. If `HF_TOKEN` is unset and
    directly**; do not import a convenience file that pulls optional extras
    (Hadamard, flash-attn, extra CUDA) unless that extra is required. Triton
    value arguments must be Python floats/ints — 0-d tensors compile as
-   pointers. Keep the rewrite only if generate still works and WikiText-2
-   tok/s improves.
+   pointers.
 4. Write and validate like a port worker:
 
    ```bash
@@ -80,13 +81,16 @@ this GPU type. Do not ask the parent mid-stage. If `HF_TOKEN` is unset and
      --overlay-dir <bundle>
    ```
 
-5. Return the new overlay path. The parent will `quant-run` + `quant-verify` +
-   `quant-benchmark` again. Keep the rewrite only if generate still works **and**
-   WikiText-2 / VRAM / tokens-s improve versus the previous benchmark.
-   Otherwise return `revert`.
+5. Return the new overlay path (validate only). Do **not** launch a GPU job
+   and do **not** return `revert` from metrics you did not measure. The parent
+   runs `quant-run` + `quant-verify` + `quant-benchmark`, then diagnose. If
+   generate fails or WikiText-2 / VRAM / tok/s did not improve, the parent
+   keeps the previous overlay (`recommended_action: none` or another kernel
+   only if diagnose says so). Return `cannot_author` only if you cannot write
+   a valid overlay (no packed path, apply-check failed).
 
 Never edit `.venvs/<slug>/repo`.
 
 ## Return
 
-New overlay path, or `revert` if you cannot improve safely.
+New overlay path, or `cannot_author` if you cannot write a valid overlay.

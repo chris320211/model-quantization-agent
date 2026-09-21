@@ -1,9 +1,11 @@
 ---
 name: quant-run
 description: >-
-  Launch a validated quantization script on this GPU instance, monitor it, and
-  retry with one fix per failed attempt. Use as a quant-run subagent after
-  quant-port. Does not change methods or rewrite kernels.
+  Launch one validated quantization script on this GPU instance and monitor it
+  to completion. Use only as a quant-run subagent launched by the parent quant
+  skill after quant-port (or after diagnose/kernel). Does not patch overlays,
+  change methods, or rewrite kernels.
+disable-model-invocation: true
 ---
 
 # Quant Run
@@ -17,7 +19,7 @@ Do not ask the parent mid-stage. If `HF_TOKEN` is unset and `.env` exists,
 
 ## Do
 
-1. Launch (isolated box; flag required):
+1. Launch **once** (isolated box; flag required):
 
    ```bash
    $S/launch.py <script.py> --request out/requests/<slug>.json \
@@ -42,20 +44,16 @@ Do not ask the parent mid-stage. If `HF_TOKEN` is unset and `.env` exists,
    $S/jobs.py logs <job_id> -n 200
    ```
 
-3. On failure: read `jobs/<job_id>/stderr.log` (and `diagnose.json`
-   `error_excerpt` / `notes` when the parent passed that path). Infer **one**
-   overlay patch that fixes that traceback, same method and overlay strategy.
-   Examples: FlashAttention2 `ImportError` → SDPA/eager; cuda vs cpu in pack →
-   move scales onto the weight device; missing `quarot._CUDA` → import pack
-   helpers without the FA2 modeling path. Re-validate with
-   `validate_script.py`, then launch again. Bounded retries (3). Do **not**
-   relaunch the same script unchanged. Do not retry gated-model auth, OOM at
-   the same config, disk full, or wrong GPU.
+3. On failure: return `failed` and the `job_id`. Tail stderr in the return
+   so the parent can pass it to diagnose. Do **not** invent an overlay patch.
+   Do not call `overlay.py write`. Do not relaunch. Process failures are
+   parent diagnose (`author_fix` / `retry_ranked_overlay`) so they count
+   against `retry_gpu_jobs_max` and `tried_overlays`. Do not retry
+   gated-model auth, OOM at the same config, disk full, or wrong GPU.
 
 4. Do not rewrite kernels here. Do not start a second GPU job while one is
    running. Do not interpret WikiText-2; that is benchmark + parent diagnose.
-   Your launch retries are process failures only (same overlay strategy). The
-   parent owns the method-agnostic quality/efficiency retry loop.
+   The parent owns every overlay patch and every extra GPU job.
 
 ## Return
 

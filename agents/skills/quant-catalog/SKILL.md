@@ -2,9 +2,11 @@
 name: quant-catalog
 description: >-
   After a successful beneficial quantization run (quality_ok and better VRAM
-  or tok/s than fp16), record one library row: model, GPU instance, method,
-  paper, method GitHub repo, and published weights. Use in the parent after
-  quant-publish. Not a subagent.
+  or tok/s than fp16) and quant-publish, record one library row: model, GPU
+  instance, method, paper, method GitHub repo, and published weights. Use in
+  the parent after quant-publish. Not a subagent. Does not refresh the Hub
+  collection (quant-sync does).
+disable-model-invocation: true
 ---
 
 # Quant Catalog
@@ -26,14 +28,13 @@ $S/library.py --catalog --job-id <job_id> \
   --request out/requests/<slug>.json \
   --hub-url https://huggingface.co/<you>/<slug>
 $S/library.py --rebuild
-$S/library.py --sync-hf-collection
 ```
 
-`--sync-hf-collection` needs `HF_TOKEN` already loaded. If unset, skip sync.
+Do not call `--sync-hf-collection` here. **quant-sync** refreshes the Hub
+collection and pushes GitHub.
 
 Do not edit `catalog.json` by hand. Do not commit weights. Then run
-**quant-sync** in this parent session (GitHub push + Hub collection). Third
-parties without push access PR
+**quant-sync** in this parent session. Third parties without push access PR
 `library/contributions/<model>__<gpu>__<method>.json`.
 
 Docs: `library/LIBRARY.md`.

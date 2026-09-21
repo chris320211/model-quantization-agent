@@ -3,8 +3,10 @@ name: quant-gather
 description: >-
   Find a quantization method’s paper and GitHub from the method name, clone the
   repo, snapshot the named model’s weights (typically Hub org/name), record GPU
-  facts, and install one method venv. Use as a quant-gather subagent. No method
-  catalog. Does not adapt or launch GPU jobs.
+  facts, and install one method venv. Use only as a quant-gather subagent
+  launched by the parent quant skill. No method catalog. Does not adapt or
+  launch GPU jobs.
+disable-model-invocation: true
 ---
 
 # Quant Gather

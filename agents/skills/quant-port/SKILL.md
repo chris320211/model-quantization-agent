@@ -3,7 +3,10 @@ name: quant-port
 description: >-
   Adapt a gathered quantization method to the chosen model. Coordinates up to
   three named port-strategy subagents, validates their overlays without a GPU
-  job, and returns a ranked winner. Use after quant-gather.
+  job, and returns a ranked winner. Use only as a quant-port subagent launched
+  by the parent quant skill after quant-gather. Also used for strategy
+  diagnose_fix when the parent executes author_fix.
+disable-model-invocation: true
 ---
 
 # Quant Port
@@ -124,6 +127,10 @@ or inside the returned bundle notes. Do not launch a job. Do not build custom ke
 ```text
 winner: out/overlays/<slug>/dispatch/<hash>/
 script: out/overlays/<slug>/dispatch/quantize.py
-ranked: dispatch, llama_alias
+ranked: out/overlays/<slug>/dispatch/<hash>/, out/overlays/<slug>/llama_alias/<hash>/
 failed: adapter_only (reason)
 ```
+
+`ranked` is overlay **directories** (hashed bundles), not strategy names.
+`request.py --write-json` must store those paths so diagnose can pick the next
+untried overlay.

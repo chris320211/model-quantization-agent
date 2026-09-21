@@ -217,6 +217,47 @@ def test_record_job_replaces_same_method_and_ranks_two_methods(tmp_path, monkeyp
     assert local["status"] == "local_only"
 
 
+def test_record_job_rejects_non_beneficial_runs(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths_mod, "JOBS_ROOT", tmp_path / "jobs")
+    monkeypatch.setattr(paths_mod, "LIBRARY_ROOT", tmp_path / "library")
+    monkeypatch.setattr(paths_mod, "REPO_ROOT", tmp_path)
+    job_id = "20260101T000000Z-ffffff"
+    _write_job(tmp_path, job_id, packed=False, tps=100.0, ratio=8.0)
+    request = {
+        "method_name": "QuaRot",
+        "model_id": "Qwen/Qwen2.5-1.5B-Instruct",
+        "gpu_instance": "g5.2xlarge",
+        "slug": "quarot-qwen25-15b-g52xlarge",
+        "arxiv_id": "2404.00456",
+        "repo_url": "https://github.com/spcl/QuaRot",
+    }
+    try:
+        library_mod.record_job(job_id=job_id, request=request)
+    except RuntimeError as exc:
+        assert "quality_ok" in str(exc) or "beat fp16" in str(exc)
+    else:
+        raise AssertionError("expected record_job to reject a non-beneficial run")
+    groups_dir = tmp_path / "library" / "groups"
+    assert not groups_dir.exists() or list(groups_dir.glob("*.json")) == []
+
+    job_ok = "20260101T000000Z-eeeeee"
+    _write_job(tmp_path, job_ok, packed=True, tps=100.0, ratio=1.1)
+    bench = jobs_mod.job_dir(job_ok) / "benchmark.json"
+    payload = json.loads(bench.read_text())
+    payload["comparison"]["improved_vram"] = False
+    payload["comparison"]["improved_throughput"] = False
+    bench.write_text(json.dumps(payload) + "\n")
+    try:
+        library_mod.record_job(
+            job_id=job_ok,
+            request={**request, "method_name": "SmoothQuant", "slug": "sq"},
+        )
+    except RuntimeError as exc:
+        assert "beat fp16" in str(exc)
+    else:
+        raise AssertionError("expected record_job to reject quality_ok without efficiency")
+
+
 def test_contribution_json_is_the_pr_unit(tmp_path, monkeypatch):
     monkeypatch.setattr(paths_mod, "JOBS_ROOT", tmp_path / "jobs")
     monkeypatch.setattr(paths_mod, "LIBRARY_ROOT", tmp_path / "library")
@@ -304,6 +345,13 @@ def test_validate_contribution_requires_hub_and_quality():
         assert "paper" in str(exc)
     else:
         raise AssertionError("expected paper rejection")
+    fat = dict(base, tokens_per_s=50.0, peak_vram_gb=9.0)
+    try:
+        library_mod.validate_contribution(fat)
+    except ValueError as exc:
+        assert "beat fp16" in str(exc)
+    else:
+        raise AssertionError("expected efficiency rejection")
 
 
 def test_pick_best_none_when_nothing_quality_ok():
@@ -318,12 +366,13 @@ def test_quant_skills_point_at_library_index():
     assert "catalog.json" in parent
     assert "library/" in bench
     assert "contributions" in parent
-    assert "contributions" in publish
     catalog = (ROOT / "agents" / "skills" / "quant-catalog" / "SKILL.md").read_text()
+    assert "contributions" in catalog
     assert "--catalog" in catalog
     assert (ROOT / "library" / "LIBRARY.md").is_file()
     assert not (ROOT / "library" / "README.md").is_file()
-    assert "library.json" in publish or "sync-hf-collection" in publish
+    assert "library/" in publish
+    assert "artifact store" in publish.lower() or "not the comparison" in publish.lower()
     sync = (ROOT / "agents" / "skills" / "quant-sync" / "SKILL.md").read_text()
     assert "sync_remotes.py" in sync
     assert "--push" in sync

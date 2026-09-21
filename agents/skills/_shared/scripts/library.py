@@ -264,6 +264,12 @@ def validate_contribution(data: dict, *, require_hub: bool = True) -> dict:
         raise ValueError("ppl_ratio must match ppl / fp16_ppl")
     if ratio > QUALITY_PPL_RATIO_MAX:
         raise ValueError(f"ppl_ratio must be <= {QUALITY_PPL_RATIO_MAX}")
+    fp16_tps = float(data["fp16_tokens_per_s"])
+    fp16_vram = float(data["fp16_peak_vram_gb"])
+    tps = float(data["tokens_per_s"])
+    vram = float(data["peak_vram_gb"])
+    if tps <= fp16_tps and vram >= fp16_vram:
+        raise ValueError("contribution must beat fp16 VRAM or tok/s")
     dataset = str(data.get("dataset") or "wikitext-2-raw-v1")
     if "wikitext-2" not in dataset.lower():
         raise ValueError("contributions must use WikiText-2")
@@ -694,6 +700,10 @@ def record_job(
         raise RuntimeError("library record requires jobs/<id>/benchmark.json")
     benchmark = _read_json(benchmark_path)
     comparison = benchmark.get("comparison") if isinstance(benchmark.get("comparison"), dict) else {}
+    if not is_beneficial(comparison):
+        raise RuntimeError(
+            "library record is only for quality_ok runs that also beat fp16 VRAM or tok/s"
+        )
     quantized = benchmark.get("quantized") if isinstance(benchmark.get("quantized"), dict) else {}
     baseline = benchmark.get("fp16_baseline") if isinstance(benchmark.get("fp16_baseline"), dict) else {}
     output_dir = resolve_workspace_path(meta.output_dir)
@@ -916,12 +926,7 @@ def main() -> int:
                 )
                 print(json.dumps({"status": "exported", "path": str(dest)}, indent=2))
                 return 0
-            payload = record_job(job_id=args.job_id, request=request, hub_url=args.hub_url)
-            if args.best:
-                print(json.dumps(payload.get("best"), indent=2))
-            else:
-                print(json.dumps(payload, indent=2))
-            return 0
+            raise SystemExit("library write requires --catalog (or --export-contribution)")
         rows = query(
             model_id=args.model_id,
             method_name=args.method_name,

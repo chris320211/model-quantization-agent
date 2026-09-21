@@ -510,7 +510,15 @@ def benchmark_job(
     compare_payload: dict | None = None
     compare_error: str | None = None
     try:
-        compare_payload = library_mod.record_job(job_id=meta.job_id, request=request)
+        rows = library_mod.query(
+            model_id=str(request.get("model_id") or ""),
+            gpu_instance=str(request.get("gpu_instance") or ""),
+            best_only=True,
+        )
+        compare_payload = {
+            "recorded": False,
+            "best": rows[0] if rows else None,
+        }
     except Exception as exc:  # noqa: BLE001 — ranking must not fail a passed WikiText-2 run
         compare_error = str(exc)
     return {

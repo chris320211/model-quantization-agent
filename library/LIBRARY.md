@@ -23,6 +23,15 @@ GPU: NVIDIA A10G
 
 **Best:** SmoothQuant (`smoothquant-qwen25-15b-g52xlarge`).
 
+## google/gemma-2-2b-it on g5.2xlarge
+GPU: NVIDIA A10G
+
+| Model | GPU | Method | Paper | Repo | Hugging Face | PPL ratio | tok/s | VRAM GB |
+| --- | --- | --- | --- | --- | --- | ---: | ---: | ---: |
+| google/gemma-2-2b-it | g5.2xlarge | SmoothQuant | [paper](https://arxiv.org/abs/2211.10438) | [repo](https://github.com/mit-han-lab/smoothquant) | [hub](https://huggingface.co/chris320211/smoothquant-gemma2-2b-g52xlarge) | 1.0215 | 6322.2 | 8.090 |
+
+**Best:** SmoothQuant (`smoothquant-gemma2-2b-g52xlarge`).
+
 ## ibm-granite/granite-3.3-2b-instruct on g5.2xlarge
 GPU: NVIDIA A10G
 

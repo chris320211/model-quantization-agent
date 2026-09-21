@@ -9,6 +9,13 @@
       "best_method": "SmoothQuant"
     },
     {
+      "model_id": "google/gemma-2-2b-it",
+      "gpu_instance": "g5.2xlarge",
+      "gpu_name": "NVIDIA A10G",
+      "n_methods": 1,
+      "best_method": "SmoothQuant"
+    },
+    {
       "model_id": "ibm-granite/granite-3.3-2b-instruct",
       "gpu_instance": "g5.2xlarge",
       "gpu_name": "NVIDIA A10G",

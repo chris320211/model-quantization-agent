@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "model_id": "google/gemma-2-2b-it",
+  "gpu_instance": "g5.2xlarge",
+  "gpu_name": "NVIDIA A10G",
+  "fp16_baseline": {
+    "perplexity": 14.80926402539143,
+    "tokens_per_s": 5412.997669046634,
+    "peak_vram_gb": 9.973273754119873
+  },
+  "methods": [
+    {
+      "method_name": "SmoothQuant",
+      "slug": "smoothquant-gemma2-2b-g52xlarge",
+      "job_id": "20260921T132955Z-21a810",
+      "quality_ok": true,
+      "ppl": 15.128110253503799,
+      "ppl_ratio": 1.021530187291258,
+      "tokens_per_s": 6322.213318820181,
+      "peak_vram_gb": 8.09018850326538,
+      "improved_throughput": true,
+      "improved_vram": true,
+      "packed": true,
+      "artifact_dir": "quantized/smoothquant-gemma2-2b-g52xlarge",
+      "hub_url": "https://huggingface.co/chris320211/smoothquant-gemma2-2b-g52xlarge",
+      "arxiv_id": "2211.10438",
+      "paper_url": "https://arxiv.org/abs/2211.10438",
+      "repo_url": "https://github.com/mit-han-lab/smoothquant",
+      "repo_commit": "c61476d728e42ae0d8a35e7e78494edcac3237b5",
+      "verification_status": "passed",
+      "rank": 1
+    }
+  ],
+  "best": {
+    "method_name": "SmoothQuant",
+    "slug": "smoothquant-gemma2-2b-g52xlarge",
+    "job_id": "20260921T132955Z-21a810",
+    "rank": 1,
+    "why": "quality_ok, then higher WikiText-2 tok/s, then lower peak VRAM, prefer packed, then lower ppl_ratio",
+    "artifact_dir": "quantized/smoothquant-gemma2-2b-g52xlarge",
+    "hub_url": "https://huggingface.co/chris320211/smoothquant-gemma2-2b-g52xlarge"
+  }
+}

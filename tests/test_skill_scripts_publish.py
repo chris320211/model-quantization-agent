@@ -63,3 +63,15 @@ def test_stage_suffixes_include_safetensors_and_tokenizer_merges():
     assert ".safetensors" in publish_mod._STAGE_SUFFIXES
     assert ".bin" in publish_mod._STAGE_SUFFIXES
     assert "merges.txt" in publish_mod._COPY_NAMES
+
+
+def test_publish_requires_beneficial_comparison():
+    assert publish_mod.library_mod.is_beneficial(
+        {"quality_ok": True, "improved_vram": True, "improved_throughput": False}
+    )
+    assert not publish_mod.library_mod.is_beneficial(
+        {"quality_ok": True, "improved_vram": False, "improved_throughput": False}
+    )
+    assert not publish_mod.library_mod.is_beneficial(
+        {"quality_ok": False, "improved_vram": True, "improved_throughput": True}
+    )

@@ -158,8 +158,10 @@ def stage_hub_bundle(
         raise RuntimeError("publish requires jobs/<id>/benchmark.json")
     benchmark = _read_json(benchmark_path)
     comparison = benchmark.get("comparison") if isinstance(benchmark.get("comparison"), dict) else {}
-    if comparison.get("quality_ok") is not True:
-        raise RuntimeError("publish requires comparison.quality_ok true")
+    if not library_mod.is_beneficial(comparison):
+        raise RuntimeError(
+            "publish requires quality_ok and a VRAM or tok/s win versus fp16"
+        )
 
     output_dir = resolve_workspace_path(meta.output_dir)
     if not output_dir.is_dir():
@@ -322,22 +324,7 @@ def main() -> int:
                 manifest = upload_hub_bundle(manifest, args.repo_id)
             hub_url = manifest.get("hub_url")
             if hub_url:
-                try:
-                    library_mod.record_job(
-                        job_id=args.job_id,
-                        request=request,
-                        hub_url=str(hub_url),
-                    )
-                except Exception:
-                    pass
-                try:
-                    library = library_mod.sync_hf_collection()
-                    manifest["library"] = {
-                        "hf_collection_url": library.get("hf_collection_url"),
-                        "added": library.get("added"),
-                    }
-                except Exception as exc:
-                    manifest["library"] = {"status": "skipped", "error": str(exc)[:240]}
+                manifest["hub_url"] = hub_url
         print(json.dumps(manifest, indent=2))
     except Exception as exc:
         print(str(exc), file=sys.stderr)

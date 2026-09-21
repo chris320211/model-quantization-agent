@@ -1,18 +1,20 @@
 ---
 name: quant-sync
 description: >-
-  After a beneficial quantization run, or when asked to update GitHub and
-  Hugging Face, push the library to this GitHub remote and refresh the
-  one Hub collection. Use in the parent after quant-catalog. Not a subagent.
-  Never commit checkpoints or .env.
+  After a beneficial quantization run, after recording an unsuccessful
+  attempt, or when asked to update GitHub and Hugging Face, push the library
+  to this GitHub remote and refresh the one Hub collection. Use in the parent
+  after quant-catalog. Not a subagent. Never commit checkpoints or .env.
 disable-model-invocation: true
 ---
 
 # Quant Sync
 
 Parent session only. Skip unless verify passed, `quality_ok`, and the run beat
-fp16 **VRAM or tok/s**, **or** the user asked to update GitHub / Hugging Face.
-Need the catalog row already written (`quant-catalog`) when syncing a new run.
+fp16 **VRAM or tok/s**, an unsuccessful attempt was just recorded, **or** the
+user asked to update GitHub / Hugging Face. Need the catalog or attempts row
+already written (`quant-catalog`) when syncing a new run. The Hub collection
+still lists only `quality_ok` repos.
 Do not re-quantize. Never read `.env`. Never `git add -f` gitignored paths.
 
 GitHub holds the **library table**. Hugging Face holds **weights** (already
@@ -42,7 +44,7 @@ URL). Do not run `git config`.
 Third parties without push access still PR
 `library/contributions/<model>__<gpu>__<method>.json`.
 
-Docs: `library/LIBRARY.md`.
+Docs: `library/LIBRARY.md`, `library/ATTEMPTS.md`.
 
 ## Return
 

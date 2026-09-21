@@ -29,7 +29,7 @@ flowchart LR
   in["method + model + GPU"] --> run["port and measure vs fp16"]
   run --> ok{"quality OK and faster or smaller?"}
   ok -->|yes| lib["library table + published weights"]
-  ok -->|no| report["report metrics"]
+  ok -->|no| attempts["report metrics + unsuccessful attempts"]
 ```
 
 Open this repo in your agent on the GPU box and invoke `quant`. It collects
@@ -42,12 +42,14 @@ Successful runs are ranked here. A run is published when WikiText-2 stays
 within 1.5× fp16 perplexity **and** VRAM or speed beats fp16. The table
 compares methods on the same model × GPU. Rows already in the table
 (Granite, Phi-3, …) are **published examples**, not the set of allowed
-models.
+models. Unsuccessful ports (budget exhausted, PPL exploded, …) are listed
+separately so they are not forgotten.
 
 Hugging Face is where **weights** are stored and downloaded, not which
 models you may quantize.
 
 - **Ranking (GitHub):** [library/LIBRARY.md](library/LIBRARY.md)
+- **Unsuccessful attempts:** [library/ATTEMPTS.md](library/ATTEMPTS.md)
 - **Weights:** [quant-agent collection](https://huggingface.co/collections/chris320211/quant-agent-library-6aaf22fcafd69b39eabc9230)
 
 ## Setup
@@ -79,6 +81,7 @@ token for gated downloads and for publishing quantized weights.
 | `quantized/<slug>` | Saved quantized weights |
 | `jobs/<id>/benchmark.json` | WikiText-2 vs fp16 |
 | `library/LIBRARY.md` | Ranking of published runs |
+| `library/ATTEMPTS.md` | Unsuccessful stops (not ranked) |
 
 ```bash
 PY=$(command -v python || command -v python3)
@@ -99,6 +102,7 @@ This README is the short overview. Details live under [`agents/`](agents/):
 | [`agents/skills/_shared/pipeline_contract.md`](agents/skills/_shared/pipeline_contract.md) | Order, retries, on-disk layout |
 | [`agents/skills/_shared/subagents.md`](agents/skills/_shared/subagents.md) | How stages are launched |
 | [`library/LIBRARY.md`](library/LIBRARY.md) | Published ranking table |
+| [`library/ATTEMPTS.md`](library/ATTEMPTS.md) | Unsuccessful method × model × GPU stops |
 | [`library/contributions/README.md`](library/contributions/README.md) | How to add a library row |
 
 Every skill is a `SKILL.md` in [`agents/skills/`](agents/skills/).

@@ -40,11 +40,14 @@ Order:
 11. `quant-catalog` in the **parent** after a **beneficial** run (quality_ok and
     better VRAM or tok/s than fp16). Standard row: model, GPU instance, method,
     paper URL, method GitHub, Hugging Face URL. Writes
-    `library/contributions/` and rebuilds `library/catalog.json`. Docs:
-    `library/LIBRARY.md`.
-12. `quant-sync` in the **parent** after catalog (or when asked to update
-    GitHub and Hugging Face). Rebuilds `library/`, `git push`es allowlisted
-    library/skill paths to this remote, and refreshes the one Hub collection.
+    `library/contributions/` and rebuilds `library/catalog.json`. On
+    unsuccessful STOP (`recommended_action: none` and not beneficial), the
+    same skill records `library/attempts/` (`--record-attempt`) so failed
+    ports are not lost. Docs: `library/LIBRARY.md`, `library/ATTEMPTS.md`.
+12. `quant-sync` in the **parent** after catalog **or** after recording an
+    unsuccessful attempt (or when asked to update GitHub and Hugging Face).
+    Rebuilds `library/`, `git push`es allowlisted library/skill paths to this
+    remote, and refreshes the one Hub collection (quality_ok repos only).
     Never commits `quantized/`, `jobs/`, `out/`, or `.env`. Third parties
     without push access still PR `library/contributions/`.
 13. Tell the user where weights, metrics, the Hub URL (if uploaded), and
@@ -97,6 +100,8 @@ for every new slug.
   `gpu_instance`; fetch via `hub_repo_id`)
 - Library boards: `library/index.json` and `library/groups/<model>__<gpu>.json`
 - Third-party runs: `library/contributions/<model>__<gpu>__<method>.json` (PR)
+- Unsuccessful stops: `library/attempts/` and `library/ATTEMPTS.md`
+  (not ranked; no Hub weights)
 
 ## Invariants
 
@@ -112,7 +117,8 @@ for every new slug.
 - `quant-benchmark` always compares WikiText-2 perplexity (and throughput/VRAM)
   for that artifact against the original fp16 snapshot. `verify.py --baseline`
   is not a substitute. Benchmark does **not** write `library/`; only
-  `quant-catalog` records a beneficial row.
+  `quant-catalog` records a beneficial row. Unsuccessful STOPs use
+  `library.py --record-attempt` (parent `quant-catalog`), not this stage.
 - Benchmark measures; diagnose classifies; the **parent** retries. Do not fold
   GPU relaunch into run, benchmark, or diagnose. `quant-run` launches once.
 - `compare.py` is a back-compat alias of `library.py`. Skills call `library.py`.

@@ -30,7 +30,9 @@ flowchart TD
   pub --> cat["quant-catalog"]
   cat --> sync["quant-sync"]
   sync --> out["library table + published weights"]
-  ship -->|no| report["report WikiText-2 table"]
+  ship -->|no| fail["quant-catalog --record-attempt"]
+  fail --> sync2["quant-sync"]
+  sync2 --> attempts["ATTEMPTS.md + WikiText-2 table"]
 ```
 
 ## Parent (this session)
@@ -40,7 +42,7 @@ flowchart TD
 | [quant](skills/quant/SKILL.md) | Dispatcher. Same loop for every method × model × GPU. |
 | [quant-setup](skills/quant-setup/SKILL.md) | Ask the user for a mode-600 `.env` once per machine; load it every shell. Never read the file. |
 | [quant-publish](skills/quant-publish/SKILL.md) | Upload saved weights + WikiText-2 metrics to the Hub. |
-| [quant-catalog](skills/quant-catalog/SKILL.md) | Record one library row (model, GPU, method, paper, repo, weights). |
+| [quant-catalog](skills/quant-catalog/SKILL.md) | Record a published library row, or an unsuccessful attempt. |
 | [quant-sync](skills/quant-sync/SKILL.md) | Push `library/` to GitHub and refresh the Hub collection. Never commits checkpoints. |
 
 ## Subagents (one stage each)
@@ -66,3 +68,10 @@ tok/s beat fp16. Then, in the parent:
 
 Without push access, PR `library/contributions/<model>__<gpu>__<method>.json`.
 See [`library/contributions/README.md`](../library/contributions/README.md).
+
+## After an unsuccessful stop
+
+If diagnose is `none` and the run is not beneficial, still record it:
+
+1. `quant-catalog` `--record-attempt` — row in [`library/ATTEMPTS.md`](../library/ATTEMPTS.md)
+2. `quant-sync` — GitHub only (no Hub weights, collection stays `quality_ok`)

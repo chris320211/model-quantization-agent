@@ -217,6 +217,179 @@ def test_record_job_replaces_same_method_and_ranks_two_methods(tmp_path, monkeyp
     assert local["status"] == "local_only"
 
 
+def _write_diagnose(job_id: str, payload: dict) -> None:
+    (jobs_mod.job_dir(job_id) / "diagnose.json").write_text(json.dumps(payload) + "\n")
+
+
+def test_record_attempt_keeps_failures_off_the_public_board(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths_mod, "JOBS_ROOT", tmp_path / "jobs")
+    monkeypatch.setattr(paths_mod, "LIBRARY_ROOT", tmp_path / "library")
+    monkeypatch.setattr(paths_mod, "REPO_ROOT", tmp_path)
+    job_id = "20260101T000000Z-aaaaaa"
+    _write_job(tmp_path, job_id, packed=False, tps=100.0, ratio=8.76)
+    _write_diagnose(
+        job_id,
+        {
+            "issue_codes": ["ppl_exploded", "throughput_unchanged"],
+            "root_cause": "ppl_ratio_exploded",
+            "recommended_action": "none",
+            "notes": ["Retry GPU budget exhausted; stop."],
+            "error_excerpt": "reusing GPTQ weights spinquant.pt",
+            "retry": {"used": 14, "max": 14, "remaining": 0},
+            "best_job_id": job_id,
+            "best_ppl_ratio": 8.76,
+        },
+    )
+    request = {
+        "method_name": "SpinQuant",
+        "model_id": "google/gemma-2-2b-it",
+        "gpu_instance": "g5.2xlarge",
+        "gpu_name": "NVIDIA A10G",
+        "slug": "spinquant-gemma2-2b-g52xlarge",
+        "arxiv_id": "2405.16406",
+        "repo_url": "https://github.com/facebookresearch/SpinQuant",
+        "retry_gpu_jobs_used": 14,
+        "retry_gpu_jobs_max": 14,
+        "best_job_id": job_id,
+        "best_ppl_ratio": 8.76,
+    }
+    result = library_mod.record_attempt(job_id=job_id, request=request)
+    assert result["status"] == "recorded"
+    assert result["stop_reason"] == "budget_exhausted"
+    assert result["method_name"] == "SpinQuant"
+    assert library_mod.query() == []
+    assert library_mod.catalog_rows() == []
+    attempts = library_mod.query_attempts()
+    assert len(attempts) == 1
+    row = attempts[0]
+    assert row["model_id"] == "google/gemma-2-2b-it"
+    assert row["issue_codes"] == ["ppl_exploded", "throughput_unchanged"]
+    assert row["retry_gpu_jobs_used"] == 14
+    assert abs(float(row["ppl_ratio"]) - 8.76) < 1e-6
+    md = (tmp_path / "library" / "ATTEMPTS.md").read_text()
+    assert "SpinQuant" in md
+    assert "budget_exhausted" in md
+    library_md = (tmp_path / "library" / "LIBRARY.md").read_text()
+    assert "ATTEMPTS.md" in library_md
+    assert "SpinQuant" not in library_md
+    assert "google/gemma-2-2b-it" not in library_md
+    catalog = json.loads((tmp_path / "library" / "catalog.json").read_text())
+    assert catalog["rows"] == []
+
+
+def test_record_attempt_without_benchmark_records_process_failed(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths_mod, "JOBS_ROOT", tmp_path / "jobs")
+    monkeypatch.setattr(paths_mod, "LIBRARY_ROOT", tmp_path / "library")
+    monkeypatch.setattr(paths_mod, "REPO_ROOT", tmp_path)
+    job_id = "20260101T000000Z-bbbbbb"
+    output = tmp_path / "quantized" / job_id
+    output.mkdir(parents=True)
+    meta = jobs_mod.JobMeta(
+        job_id=job_id,
+        method_id="m",
+        model_id="Qwen/Qwen2.5-1.5B-Instruct",
+        venv="venv",
+        script_path="script.py",
+        output_dir=str(output),
+        pid=1,
+        started_at="2026-01-01T00:00:00Z",
+        status="failed",
+        exit_code=1,
+        verification_status=None,
+        benchmark_status=None,
+    )
+    jobs_mod.write_meta(meta)
+    _write_diagnose(
+        job_id,
+        {
+            "issue_codes": ["process_failed"],
+            "root_cause": "process_failed",
+            "recommended_action": "none",
+            "notes": ["GPU quantize process crashed."],
+            "retry": {"used": 1, "max": 14, "remaining": 13},
+        },
+    )
+    result = library_mod.record_attempt(
+        job_id=job_id,
+        request={
+            "method_name": "QuaRot",
+            "model_id": "Qwen/Qwen2.5-1.5B-Instruct",
+            "gpu_instance": "g5.2xlarge",
+            "slug": "quarot-qwen25-15b-g52xlarge",
+            "arxiv_id": "2404.00456",
+            "repo_url": "https://github.com/spcl/QuaRot",
+            "retry_gpu_jobs_used": 1,
+            "retry_gpu_jobs_max": 14,
+        },
+    )
+    assert result["stop_reason"] == "process_failed"
+    row = library_mod.query_attempts()[0]
+    assert row["ppl"] is None
+    assert row["issue_codes"] == ["process_failed"]
+    assert library_mod.query() == []
+
+
+def test_record_attempt_rejects_beneficial_runs(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths_mod, "JOBS_ROOT", tmp_path / "jobs")
+    monkeypatch.setattr(paths_mod, "LIBRARY_ROOT", tmp_path / "library")
+    monkeypatch.setattr(paths_mod, "REPO_ROOT", tmp_path)
+    job_id = "20260101T000000Z-cccccc"
+    _write_job(tmp_path, job_id, packed=True, tps=5105.9, ratio=1.17)
+    request = {
+        "method_name": "FlatQuant",
+        "model_id": "microsoft/Phi-3-mini-4k-instruct",
+        "gpu_instance": "g5.2xlarge",
+        "slug": "flatquant-phi3-mini-4k-g52xlarge",
+        "arxiv_id": "2410.09426",
+        "repo_url": "https://github.com/ruikangliu/FlatQuant",
+    }
+    try:
+        library_mod.record_attempt(job_id=job_id, request=request)
+    except RuntimeError as exc:
+        assert "beneficial" in str(exc)
+    else:
+        raise AssertionError("expected record_attempt to reject a beneficial run")
+    assert library_mod.query_attempts() == []
+
+
+def test_successful_catalog_clears_matching_attempt(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths_mod, "JOBS_ROOT", tmp_path / "jobs")
+    monkeypatch.setattr(paths_mod, "LIBRARY_ROOT", tmp_path / "library")
+    monkeypatch.setattr(paths_mod, "REPO_ROOT", tmp_path)
+    failed_id = "20260101T000000Z-dddddd"
+    ok_id = "20260101T000000Z-eeeeee"
+    _write_job(tmp_path, failed_id, packed=False, tps=100.0, ratio=8.0)
+    _write_diagnose(
+        failed_id,
+        {
+            "issue_codes": ["ppl_exploded"],
+            "recommended_action": "none",
+            "notes": ["Retry GPU budget exhausted; stop."],
+            "retry": {"used": 14, "max": 14, "remaining": 0},
+        },
+    )
+    request = {
+        "method_name": "FlatQuant",
+        "model_id": "microsoft/Phi-3-mini-4k-instruct",
+        "gpu_instance": "g5.2xlarge",
+        "slug": "flatquant-phi3-mini-4k-g52xlarge",
+        "arxiv_id": "2410.09426",
+        "repo_url": "https://github.com/ruikangliu/FlatQuant",
+    }
+    library_mod.record_attempt(job_id=failed_id, request=request)
+    assert library_mod.query_attempts()
+    _write_job(tmp_path, ok_id, packed=True, tps=5105.9, ratio=1.17)
+    library_mod.record_job(
+        job_id=ok_id,
+        request=request,
+        hub_url="https://huggingface.co/example/flatquant-phi3",
+    )
+    assert library_mod.query_attempts() == []
+    assert library_mod.query(method_name="FlatQuant")
+    leftover = tmp_path / "library" / "attempts"
+    assert list(leftover.glob("*.json")) == []
+
+
 def test_record_job_rejects_non_beneficial_runs(tmp_path, monkeypatch):
     monkeypatch.setattr(paths_mod, "JOBS_ROOT", tmp_path / "jobs")
     monkeypatch.setattr(paths_mod, "LIBRARY_ROOT", tmp_path / "library")
@@ -366,10 +539,13 @@ def test_quant_skills_point_at_library_index():
     assert "catalog.json" in parent
     assert "library/" in bench
     assert "contributions" in parent
+    assert "--record-attempt" in parent or "record-attempt" in parent
     catalog = (ROOT / "agents" / "skills" / "quant-catalog" / "SKILL.md").read_text()
     assert "contributions" in catalog
     assert "--catalog" in catalog
+    assert "--record-attempt" in catalog
     assert (ROOT / "library" / "LIBRARY.md").is_file()
+    assert (ROOT / "library" / "ATTEMPTS.md").is_file()
     assert not (ROOT / "library" / "README.md").is_file()
     assert "library/" in publish
     assert "artifact store" in publish.lower() or "not the comparison" in publish.lower()
@@ -424,12 +600,19 @@ def test_repo_contributions_join_one_library():
     assert files, "expected at least one contribution JSON in the shared library"
     assert not (ROOT / "compare").exists()
     assert (ROOT / "library" / "LIBRARY.md").is_file()
+    assert (ROOT / "library" / "ATTEMPTS.md").is_file()
     assert not (ROOT / "library" / "README.md").is_file()
     for path in files:
         library_mod.validate_contribution(json.loads(path.read_text()))
     rows = library_mod.query()
     assert any(row.get("hub_repo_id") for row in rows)
     assert any(row.get("paper_url") and row.get("repo_url") for row in rows)
+    methods = {row["method_name"] for row in rows}
+    assert "SpinQuant" not in methods
+    assert "QuaRot" not in methods
+    attempts = {row["method_name"] for row in library_mod.query_attempts()}
+    assert "SpinQuant" in attempts
+    assert "QuaRot" in attempts
 
 
 def test_catalog_run_records_standard_links(tmp_path, monkeypatch):

@@ -13,6 +13,10 @@ tok/s beat fp16. Then:
 2. `quant-catalog` — writes this JSON
 3. `quant-sync` — GitHub + Hub collection. Without push access, open a PR.
 
+Unsuccessful stops (budget exhausted, exploded PPL, verify/run failed) go to
+[`../ATTEMPTS.md`](../ATTEMPTS.md) via `--record-attempt`. Do not PR those as
+contributions.
+
 `model_id` is the model you quantized (usually `org/name`). It is not limited
 to Microsoft Phi or any one Hub family.
 

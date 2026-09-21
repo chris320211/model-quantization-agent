@@ -18,7 +18,8 @@ value. It does not search, clone, adapt, or run GPU jobs itself.
   row, or `git push`. `quant-setup` asks for a local `.env` once (copy
   `.env.example`); load it every shell. Never read `.env`. Method comparison is
   `library/` (written by `quant-catalog` / `library.py`, shipped by
-  `quant-sync`), not a Hub leaderboard and not a subagent.
+  `quant-sync`), not a Hub leaderboard and not a subagent. Unsuccessful
+  STOPs use `--record-attempt` in that same parent skill.
 - Wait until a subagent returns before starting the next **stage**.
 - **Port is the exception:** the port coordinator launches up to three *named*
   strategy subagents at once (author + validate only). The parent still runs

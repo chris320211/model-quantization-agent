@@ -46,6 +46,10 @@ Then launch **one subagent per stage**, in order. Do not do stage work yourself.
    weight files. Third parties without push access PR
    `library/contributions/<model>__<gpu>__<method>.json`. Docs:
    `library/LIBRARY.md`.
+   On STOP when the run is **not** beneficial, still run **quant-catalog**
+   with `--record-attempt` (then **quant-sync**) so SpinQuant/QuaRot-style
+   failures land in `library/ATTEMPTS.md`. They stay off the public ranking
+   and the Hub collection.
 
 ## Retry loop (any inputs)
 
@@ -123,7 +127,7 @@ A second kernel is only for `prefill_kernel_missing`.
 | `retry_ranked_overlay` | `quant-run` with `next_overlay_dir` / `next_script`, `parent_job_id`, `issue:` from `issue_codes`, and `diagnose_json` (worker reads `error_excerpt`). Then verify; benchmark only if verify passed. |
 | `author_fix` | One port-style worker `strategy: diagnose_fix` with `issue:` codes, `diagnose.json` (`error_excerpt` + `notes` + `prior_issue_codes`), and parent job stderr (validate only). Then one `quant-run` if diagnose still wants a GPU job. |
 | `kernel` | `quant-kernel` only when diagnose says so (quality OK, efficiency not, or `prefill_kernel_missing`). Not a quality retry. |
-| `none` | Stop and report the metric table (Report below). Helper returns this for success, budget exhausted, or terminal OOM/auth/disk — not for a crashed GPU process or failed WikiText-2 while retries remain. |
+| `none` | Stop and report the metric table (Report below). Helper returns this for success, budget exhausted, or terminal OOM/auth/disk — not for a crashed GPU process or failed WikiText-2 while retries remain. If the run is not beneficial, `quant-catalog --record-attempt` then `quant-sync`. |
 
 After a retry job starts:
 

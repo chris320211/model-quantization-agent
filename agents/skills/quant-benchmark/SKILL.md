@@ -39,8 +39,9 @@ The helper **always** evaluates both sides on the same WikiText-2 test corpus:
 4. Writes `jobs/<job_id>/benchmark.json` and `metrics` on the job.
 
 Do **not** record onto `library/catalog.json`. Failed and non-beneficial
-WikiText-2 jobs stay off the public board. `quant-catalog` writes the row
-after a beneficial publish.
+WikiText-2 jobs stay off the public board. `quant-catalog` writes the
+published row after a beneficial publish, and `--record-attempt` on
+unsuccessful STOP.
 
 Do not skip the fp16 side. Do not invent a different dataset unless the user
 named one; the default is WikiText-2 test, 2048-token windows, 65536 tokens.

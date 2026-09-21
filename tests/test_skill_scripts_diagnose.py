@@ -174,6 +174,7 @@ def test_classify_efficiency_only_recommends_kernel():
         },
         comparison={
             "ppl_ratio": 1.05,
+            "quality_ok": True,
             "improved_vram": False,
             "improved_throughput": False,
             "peak_vram_delta_gb": 0.0,
@@ -549,9 +550,12 @@ def test_error_excerpt_prefers_traceback_and_strips_secret_lines():
         "noise\n"
         "HF_TOKEN=should-not-appear\n"
         "Traceback (most recent call last):\n"
+        "  File \"/opt/transformers/models/tokenization_utils.py\", line 412, in tokenize\n"
+        "    tokens = self._tokenize(text)\n"
         "  File \"pack.py\", line 1, in <module>\n"
         "RuntimeError: Expected all tensors to be on the same device, "
         "but found at least two devices, cpu and cuda:0!\n"
+        "num_tokens=2048\n"
     )
     text = diagnose_mod.error_excerpt(
         stderr=stderr,
@@ -560,7 +564,13 @@ def test_error_excerpt_prefers_traceback_and_strips_secret_lines():
     assert "Traceback (most recent call last):" in text
     assert "cpu and cuda:0" in text
     assert "assert scale_row.dtype" in text
+    assert "tokenization_utils.py" in text
+    assert "tokenize" in text
+    assert "num_tokens=2048" in text
     assert "should-not-appear" not in text
+    github = diagnose_mod.error_excerpt(stderr="GITHUB_TOKEN=should-not-appear\nRuntimeError: x\n")
+    assert "should-not-appear" not in github
+    assert "RuntimeError: x" in github
 
 
 def test_error_fix_notes_from_flash_attn_and_device_mismatch():
@@ -636,4 +646,165 @@ def test_maybe_record_best_quality_keeps_lowest_ratio():
     assert payload["best_job_id"] == "job-b"
     assert payload["best_overlay_dir"] == "ov/b"
     assert payload["best_ppl_ratio"] == 2.4
+
+
+def test_classify_unpacked_verify_fail_is_loader_arch_not_kernel(tmp_path):
+    ranked_dir = tmp_path / "llama_alias" / "abc"
+    ranked_dir.mkdir(parents=True)
+    (tmp_path / "llama_alias" / "quantize.py").write_text(KEEP_RUNTIME)
+    report = diagnose_mod.classify(
+        script_signals={
+            "unwraps_to_nn_linear": False,
+            "drops_runtime": False,
+            "keeps_runtime": True,
+        },
+        comparison=None,
+        checkpoint={"dense_float_only": True, "packed_int4": False},
+        ranked=[str(ranked_dir) + "/"],
+        current_overlay=None,
+        verification_status="failed",
+        verification_error="RuntimeError: Error(s) in loading state_dict",
+        retry_gpu_jobs_used=0,
+        retry_gpu_jobs_max=14,
+    )
+    assert diagnose_mod.ISSUE_LOADER_ARCH in report["issues"]
+    assert report["recommended_action"] == diagnose_mod.ACTION_RETRY_RANKED
+    assert report["recommended_action"] != diagnose_mod.ACTION_KERNEL
+
+
+def test_classify_packed_oom_does_not_retry():
+    report = diagnose_mod.classify(
+        script_signals={"keeps_runtime": True, "saves_packed_int4": True},
+        comparison=None,
+        checkpoint={"packed_int4": True, "dense_float_only": False},
+        ranked=[],
+        current_overlay=None,
+        verification_status="failed",
+        verification_error="torch.cuda.OutOfMemoryError: CUDA out of memory",
+        retry_gpu_jobs_used=0,
+        retry_gpu_jobs_max=14,
+    )
+    assert diagnose_mod.ISSUE_OOM in report["issues"]
+    assert diagnose_mod.ISSUE_PACKED_LOADER not in report["issues"]
+    assert report["recommended_action"] == diagnose_mod.ACTION_NONE
+
+
+def test_expand_ranked_resolves_strategy_names(tmp_path, monkeypatch):
+    slug = "demo-slug"
+    overlay = tmp_path / slug / "dispatch" / "abc123"
+    overlay.mkdir(parents=True)
+    (overlay / "overlay.patch").write_text("diff --git a/x b/x\n")
+    monkeypatch.setattr(diagnose_mod.paths, "OVERLAYS_ROOT", tmp_path)
+    expanded = diagnose_mod.expand_ranked(["dispatch", "missing"], slug)
+    assert any(str(overlay.resolve()) == Path(item).resolve().as_posix() or Path(item).resolve() == overlay.resolve() for item in expanded)
+    assert all("missing" not in str(item) for item in expanded)
+
+
+def test_classify_failed_run_without_verify_is_not_none(tmp_path):
+    overlay = tmp_path / "dispatch" / "abc"
+    overlay.mkdir(parents=True)
+    (tmp_path / "dispatch" / "quantize.py").write_text(KEEP_RUNTIME)
+    report = diagnose_mod.classify(
+        script_signals=diagnose_mod.analyze_script(KEEP_RUNTIME),
+        comparison=None,
+        checkpoint=None,
+        ranked=[str(overlay) + "/"],
+        current_overlay=str(overlay),
+        job_status="failed",
+        verification_status=None,
+        retry_gpu_jobs_used=0,
+        retry_gpu_jobs_max=14,
+    )
+    assert report["recommended_action"] != diagnose_mod.ACTION_NONE
+    assert report["recommended_action"] == diagnose_mod.ACTION_AUTHOR_FIX
+    assert diagnose_mod.ISSUE_PROCESS_FAILED in report["issues"]
+    assert report["root_cause"] == diagnose_mod.ISSUE_PROCESS_FAILED
+
+
+def test_classify_failed_run_retries_untried_keep_runtime(tmp_path):
+    current = tmp_path / "dispatch" / "abc"
+    current.mkdir(parents=True)
+    other = tmp_path / "llama_alias" / "xyz"
+    other.mkdir(parents=True)
+    (tmp_path / "dispatch" / "quantize.py").write_text(KEEP_RUNTIME)
+    (tmp_path / "llama_alias" / "quantize.py").write_text(KEEP_RUNTIME)
+    report = diagnose_mod.classify(
+        script_signals=diagnose_mod.analyze_script(KEEP_RUNTIME),
+        comparison=None,
+        checkpoint=None,
+        ranked=[str(current) + "/", str(other) + "/"],
+        current_overlay=str(current),
+        job_status="failed",
+        retry_gpu_jobs_used=0,
+        retry_gpu_jobs_max=14,
+    )
+    assert report["recommended_action"] == diagnose_mod.ACTION_RETRY_RANKED
+    assert report["next_overlay_dir"] == str(other.resolve())
+
+
+def test_classify_flash_attn_process_error_authors_fix(tmp_path):
+    current = tmp_path / "dispatch" / "abc"
+    current.mkdir(parents=True)
+    other = tmp_path / "llama_alias" / "xyz"
+    other.mkdir(parents=True)
+    (tmp_path / "dispatch" / "quantize.py").write_text(KEEP_RUNTIME)
+    (tmp_path / "llama_alias" / "quantize.py").write_text(KEEP_RUNTIME)
+    excerpt = (
+        "Traceback (most recent call last):\n"
+        "ImportError: FlashAttention2 has been toggled on, but flash_attn is not installed"
+    )
+    report = diagnose_mod.classify(
+        script_signals=diagnose_mod.analyze_script(KEEP_RUNTIME),
+        comparison=None,
+        checkpoint=None,
+        ranked=[str(other) + "/"],
+        current_overlay=str(current),
+        job_status="failed",
+        error_excerpt=excerpt,
+        retry_gpu_jobs_used=0,
+        retry_gpu_jobs_max=14,
+    )
+    assert report["recommended_action"] == diagnose_mod.ACTION_AUTHOR_FIX
+    assert report["next_overlay_dir"] is None
+    assert diagnose_mod.ISSUE_PROCESS_FAILED in report["issues"]
+    assert any("error_excerpt" in note or "flash" in note.lower() for note in report["notes"])
+
+
+def test_classify_passed_verify_failed_benchmark_is_not_none(tmp_path):
+    overlay = tmp_path / "dispatch" / "abc"
+    overlay.mkdir(parents=True)
+    (tmp_path / "dispatch" / "quantize.py").write_text(KEEP_RUNTIME)
+    report = diagnose_mod.classify(
+        script_signals=diagnose_mod.analyze_script(KEEP_RUNTIME),
+        comparison=None,
+        checkpoint={"dense_float_only": True},
+        ranked=[str(overlay) + "/"],
+        current_overlay=str(overlay),
+        job_status="completed",
+        verification_status="passed",
+        benchmark_status="failed",
+        retry_gpu_jobs_used=0,
+        retry_gpu_jobs_max=14,
+    )
+    assert report["recommended_action"] != diagnose_mod.ACTION_NONE
+    assert diagnose_mod.ISSUE_BENCHMARK_FAILED in report["issues"]
+    assert report["recommended_action"] == diagnose_mod.ACTION_AUTHOR_FIX
+    assert report["recommended_action"] != diagnose_mod.ACTION_KERNEL
+
+
+def test_classify_failed_run_oom_does_not_retry():
+    report = diagnose_mod.classify(
+        script_signals={"keeps_runtime": True},
+        comparison=None,
+        checkpoint=None,
+        ranked=[],
+        current_overlay=None,
+        job_status="failed",
+        error_excerpt="torch.cuda.OutOfMemoryError: CUDA out of memory",
+        retry_gpu_jobs_used=0,
+        retry_gpu_jobs_max=14,
+    )
+    assert diagnose_mod.ISSUE_OOM in report["issues"]
+    assert diagnose_mod.ISSUE_PROCESS_FAILED not in report["issues"]
+    assert report["recommended_action"] == diagnose_mod.ACTION_NONE
 

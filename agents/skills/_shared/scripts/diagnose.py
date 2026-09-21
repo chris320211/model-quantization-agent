@@ -39,6 +39,12 @@ ISSUE_PACKED_LOADER = "packed_loader_failed"
 ISSUE_EVAL_FLAGS = "eval_runtime_flags_missing"
 ISSUE_PACKED_QUALITY_GAP = "packed_quality_gap"
 ISSUE_PREFILL_KERNEL = "prefill_kernel_missing"
+ISSUE_LOADER_ARCH = "loader_arch"
+ISSUE_OOM = "oom_same_config"
+ISSUE_DISK_FULL = "disk_full"
+ISSUE_GATED_AUTH = "gated_auth"
+ISSUE_PROCESS_FAILED = "process_failed"
+ISSUE_BENCHMARK_FAILED = "benchmark_failed"
 
 CODE_TRANSFORM_DROPPED = "transform_or_runtime_dropped_on_save"
 CODE_FAKEQUANT_DENSE = "fakequant_saved_as_dense"
@@ -60,6 +66,12 @@ GENERIC_CODES = {
     ISSUE_EVAL_FLAGS: CODE_EVAL_FLAGS,
     ISSUE_PACKED_QUALITY_GAP: CODE_PACKED_QUALITY_GAP,
     ISSUE_PREFILL_KERNEL: ISSUE_PREFILL_KERNEL,
+    ISSUE_LOADER_ARCH: ISSUE_LOADER_ARCH,
+    ISSUE_OOM: ISSUE_OOM,
+    ISSUE_DISK_FULL: ISSUE_DISK_FULL,
+    ISSUE_GATED_AUTH: ISSUE_GATED_AUTH,
+    ISSUE_PROCESS_FAILED: ISSUE_PROCESS_FAILED,
+    ISSUE_BENCHMARK_FAILED: ISSUE_BENCHMARK_FAILED,
 }
 
 ACTION_RETRY_RANKED = "retry_ranked_overlay"
@@ -72,11 +84,23 @@ ACTION_NONE = "none"
 # depend on a human raising the budget. Same caps for every method × model × GPU.
 PACKED_PATH_OVERAGE = 2
 _SECRET_LINE_RE = re.compile(
-    r"token|secret|password|api[_-]?key|hf_token|authorization",
+    r"(?:hf_token|huggingface_hub_token|api[_-]?key"
+    r"|(?<![A-Za-z])password(?![A-Za-z])"
+    r"|(?<![A-Za-z])secret(?![A-Za-z])"
+    r"|(?<![A-Za-z])authorization(?![A-Za-z])"
+    r"|HF_TOKEN\s*=|GITHUB_TOKEN\s*=)",
+    re.I,
+)
+_OOM_RE = re.compile(r"cuda out of memory|out of memory|\bcuda.?oom\b", re.I)
+_DISK_RE = re.compile(r"no space left|disk.?full|ENOSPC", re.I)
+_GATED_RE = re.compile(
+    r"gated repo|cannot access gated|401 Client Error|403 Client Error",
     re.I,
 )
 _EXCERPT_MAX_CHARS = 4000
 KERNEL_ATTEMPT_CAP = 2
+_FAILED_JOB_STATUSES = {"failed", "killed", "timeout", "termination_failed"}
+_DIAGNOSEABLE_STATUSES = {"completed"} | _FAILED_JOB_STATUSES
 _ARCH_TOKENS = (
     "qkv_proj",
     "Phi3ForCausalLM",
@@ -329,6 +353,40 @@ def _authored_fix_overlays(slug: str) -> list[str]:
     return _authored_strategy_overlays(slug, "diagnose_fix")
 
 
+def expand_ranked(ranked: list[str], slug: str) -> list[str]:
+    """Turn port `ranked` entries into overlay dirs (paths or strategy names)."""
+    expanded: list[str] = []
+    seen: set[str] = set()
+    for raw in ranked:
+        text = str(raw).strip()
+        if not text:
+            continue
+        looks_like_path = "/" in text or text.startswith("out") or Path(text).is_dir()
+        candidates = [text] if looks_like_path else []
+        if slug and not looks_like_path:
+            candidates.extend(_authored_strategy_overlays(slug, text))
+        for item in candidates:
+            marker = str(_resolve_overlay_dir(item)).rstrip("/")
+            if marker in seen:
+                continue
+            seen.add(marker)
+            expanded.append(item)
+    return expanded
+
+
+def _terminal_verify_issue(verification_error: str | None) -> str | None:
+    text = str(verification_error or "")
+    if not text.strip():
+        return None
+    if _OOM_RE.search(text):
+        return ISSUE_OOM
+    if _DISK_RE.search(text):
+        return ISSUE_DISK_FULL
+    if _GATED_RE.search(text):
+        return ISSUE_GATED_AUTH
+    return None
+
+
 def _kernel_dtype_mismatch(verification_error: str | None) -> bool:
     if not verification_error:
         return False
@@ -533,6 +591,9 @@ def classify(
     current_patch_sha: str | None = None,
     verification_status: str | None = None,
     verification_error: str | None = None,
+    job_status: str | None = None,
+    benchmark_status: str | None = None,
+    error_excerpt: str | None = None,
     best_overlay_dir: str | None = None,
     best_ppl_ratio: float | None = None,
 ) -> dict:
@@ -569,7 +630,25 @@ def classify(
         script_signals.get("saves_packed_int4")
     ) or packed_from_overlay
     verify_failed = str(verification_status or "").lower() == "failed"
-    if verify_failed and packed_artifact and _kernel_dtype_mismatch(verification_error):
+    job_failed = str(job_status or "").lower() in _FAILED_JOB_STATUSES
+    bench_failed = str(benchmark_status or "").lower() == "failed"
+    fail_text = "\n".join(
+        part.strip()
+        for part in (str(verification_error or ""), str(error_excerpt or ""))
+        if part and str(part).strip()
+    )
+    stage_failed = verify_failed or job_failed or bench_failed
+    terminal = _terminal_verify_issue(fail_text) if stage_failed else None
+    if terminal:
+        issues.append(terminal)
+        notes.append(
+            "Do not retry OOM-at-same-config, gated auth, or disk full."
+        )
+    elif (
+        (verify_failed or job_failed)
+        and packed_artifact
+        and _kernel_dtype_mismatch(fail_text)
+    ):
         issues.append(ISSUE_KERNEL_DTYPE)
         notes.append(
             "Packed int4 generate hit a CUDA kernel dtype assert (scale_row/"
@@ -582,6 +661,24 @@ def classify(
         notes.append(
             "Packed artifact failed verify. Stay on the packed/realquant path "
             "and author a loader fix; do not retry a dense ranked overlay."
+        )
+    elif verify_failed:
+        issues.append(ISSUE_LOADER_ARCH)
+        notes.append(
+            "Unpacked artifact failed verify (loader/arch). Parent retries the "
+            "next ranked overlay; do not launch kernel before WikiText-2."
+        )
+    elif job_failed:
+        issues.append(ISSUE_PROCESS_FAILED)
+        notes.append(
+            "GPU quantize process failed before verify. Read error_excerpt and "
+            "patch that traceback; this is not recommended_action none."
+        )
+    elif bench_failed:
+        issues.append(ISSUE_BENCHMARK_FAILED)
+        notes.append(
+            "WikiText-2 benchmark failed after generate-smoke passed. Retry or "
+            "author_fix; a missing comparison is not recommended_action none."
         )
 
     ppl_ratio = None
@@ -691,7 +788,15 @@ def classify(
         or ISSUE_PACKED_LOADER in ordered
         or ISSUE_EVAL_FLAGS in ordered
         or ISSUE_PACKED_QUALITY_GAP in ordered
+        or ISSUE_LOADER_ARCH in ordered
+        or ISSUE_PROCESS_FAILED in ordered
+        or ISSUE_BENCHMARK_FAILED in ordered
         or quality_ok is False
+    )
+    terminal_stop = (
+        ISSUE_OOM in ordered
+        or ISSUE_DISK_FULL in ordered
+        or ISSUE_GATED_AUTH in ordered
     )
     require_packed = (
         ISSUE_KERNEL_DTYPE in ordered
@@ -704,7 +809,10 @@ def classify(
             "quality_ok is false (WikiText-2 PPL above the 1.5x fp16 gate); "
             "retry or author_fix instead of treating this as efficiency-only."
         )
-    if quality_broken:
+    if terminal_stop:
+        action = ACTION_NONE
+        notes.append("Retry GPU budget does not apply; stop.")
+    elif quality_broken:
         skipped = _tried_keys(list(tried_overlays or []), current_overlay)
         best: tuple[tuple[int, int, int, int, int, int, int], str, str] | None = None
         seen_paths: set[str] = set()
@@ -747,7 +855,21 @@ def classify(
         if best is not None:
             next_overlay, next_script = best[1], best[2]
         allow = _allow_gpu(budget, packed_path=require_packed)
-        if best is not None and allow:
+        patchable_excerpt = (
+            (
+                ISSUE_PROCESS_FAILED in ordered
+                or ISSUE_BENCHMARK_FAILED in ordered
+            )
+            and bool(error_fix_notes(fail_text))
+        )
+        if patchable_excerpt and allow:
+            action = ACTION_AUTHOR_FIX
+            next_overlay, next_script = None, None
+            notes.append(
+                "Traceback names a concrete process error; author a diagnose_fix "
+                "overlay from error_excerpt instead of switching ranked overlays."
+            )
+        elif best is not None and allow:
             action = ACTION_RETRY_RANKED
             if budget["remaining"] == 0:
                 notes.append(
@@ -756,11 +878,17 @@ def classify(
                 )
         elif allow:
             action = ACTION_AUTHOR_FIX
-            notes.append(
-            "No remaining ranked overlay avoids the save/runtime/kernel-dtype "
-            "bug; author a diagnose_fix overlay from issue codes plus "
-            "error_excerpt (the last traceback), not a generic packed overlay."
-            )
+            if ISSUE_PROCESS_FAILED in ordered or ISSUE_BENCHMARK_FAILED in ordered:
+                notes.append(
+                    "No remaining ranked overlay for this process/benchmark "
+                    "failure; author a diagnose_fix overlay from error_excerpt."
+                )
+            else:
+                notes.append(
+                    "No remaining ranked overlay avoids the save/runtime/kernel-dtype "
+                    "bug; author a diagnose_fix overlay from issue codes plus "
+                    "error_excerpt (the last traceback), not a generic packed overlay."
+                )
         else:
             action = ACTION_NONE
             notes.append("Retry GPU budget exhausted; stop.")
@@ -769,7 +897,7 @@ def classify(
                     "Untried keep-runtime overlay is in next_overlay_dir; "
                     "run it only if the user extends the GPU budget."
                 )
-    elif not quality_broken:
+    elif quality_ok is True:
         dense = ISSUE_DENSE_FP16 in ordered or ISSUE_FAKEQUANT_NO_PACK in ordered
         vram_stuck = ISSUE_VRAM_UNCHANGED in ordered
         slow = ISSUE_THROUGHPUT_UNCHANGED in ordered
@@ -812,6 +940,14 @@ def classify(
         root = ISSUE_KERNEL_DTYPE
     elif ISSUE_PACKED_LOADER in ordered:
         root = ISSUE_PACKED_LOADER
+    elif ISSUE_LOADER_ARCH in ordered:
+        root = ISSUE_LOADER_ARCH
+    elif ISSUE_PROCESS_FAILED in ordered:
+        root = ISSUE_PROCESS_FAILED
+    elif ISSUE_BENCHMARK_FAILED in ordered:
+        root = ISSUE_BENCHMARK_FAILED
+    elif ISSUE_OOM in ordered:
+        root = ISSUE_OOM
     issue_codes = generic_issue_codes(ordered)
     return {
         "issues": ordered,
@@ -833,7 +969,7 @@ def classify(
 
 def diagnose_job(job_id: str, request: dict) -> dict:
     meta = jobs_mod.refresh_status(job_id)
-    if meta.status not in {"completed", "failed"}:
+    if meta.status not in _DIAGNOSEABLE_STATUSES:
         raise RuntimeError(
             f"diagnose requires a completed or failed job, got {meta.status}"
         )
@@ -857,7 +993,7 @@ def diagnose_job(job_id: str, request: dict) -> dict:
     checkpoint = _tensor_meta(output_dir) if output_dir.is_dir() else None
 
     ranked = request.get("ranked") if isinstance(request.get("ranked"), list) else []
-    ranked = [str(item) for item in ranked]
+    ranked = expand_ranked([str(item) for item in ranked], slug=str(request.get("slug") or ""))
     tried = request.get("tried_overlays") if isinstance(request.get("tried_overlays"), list) else []
     tried = [str(item) for item in tried]
     header_overlay = _header_overlay(code)
@@ -884,6 +1020,15 @@ def diagnose_job(job_id: str, request: dict) -> dict:
             best_ratio = float(raw_best)
     except (TypeError, ValueError):
         best_ratio = None
+    try:
+        logs = jobs_mod.tail(job_id, n_lines=200)
+    except FileNotFoundError:
+        logs = {"stderr.log": "", "stdout.log": ""}
+    excerpt = error_excerpt(
+        stderr=logs.get("stderr.log") or "",
+        stdout=logs.get("stdout.log") or "",
+        verification_error=meta.verification_error,
+    )
     report = classify(
         script_signals=script_signals,
         comparison=comparison,
@@ -897,17 +1042,11 @@ def diagnose_job(job_id: str, request: dict) -> dict:
         current_patch_sha=current_patch_sha,
         verification_status=meta.verification_status,
         verification_error=meta.verification_error,
+        job_status=meta.status,
+        benchmark_status=meta.benchmark_status,
+        error_excerpt=excerpt,
         best_overlay_dir=best_overlay_s,
         best_ppl_ratio=best_ratio,
-    )
-    try:
-        logs = jobs_mod.tail(job_id, n_lines=200)
-    except FileNotFoundError:
-        logs = {"stderr.log": "", "stdout.log": ""}
-    excerpt = error_excerpt(
-        stderr=logs.get("stderr.log") or "",
-        stdout=logs.get("stdout.log") or "",
-        verification_error=meta.verification_error,
     )
     report.update(
         {
